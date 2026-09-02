@@ -1,0 +1,1915 @@
+PAPER
+Deep Reinforcement Learning for Scalable Offline Three-Dimensional Packing
+Hao Yin1
+, Hongjie He1*, Fan Chen1
+1Southwest Jiaotong University, China
+haoyin@my.swjtu.edu.cn, hjhe@swjtu.edu.cn, fchen@swjtu.edu.cn
+Abstract
+With the increasing number of items requiring handling simultaneously in complex logistics, offline three-dimensional
+packing methods need to plan larger numbers of items. Existing deep reinforcement learning (DRL)-based packing methods cannot plan for large numbers of items while keeping
+high-quality solutions due to limited exploration space and
+high computational complexity. To address this issue, this
+paper proposes a scalable DRL-based packing method. An
+attention-based pack-Q-network (PQNet) is constructed to
+learn the optimal packing policy by integrating unpacked
+items, available spaces, and packed items. To expand the valid
+exploration space, a bidding-based multi-policy (BBMP)
+framework composed of multiple PQNets is designed to efficiently explore more latent valid solutions, thus enhancing solution quality. To reduce computational complexity,
+a training-free dynamic candidate selection (DCS) framework is proposed to incorporate comprehensive item information during execution with minimal computation overhead, which helps in effectively planning large numbers of
+items. Experimental results show that across item numbers
+of 20∼1000, our method consistently outperforms the bestperforming baseline at each tested scale by 3.2%∼13.1% in
+space utilization.
+Code — https://github.com/Ashenone511/BBMP-DCS
+Introduction
+The offline three-dimensional packing problem (3D-PP) is
+a practical combinatorial optimization problem widely studied in logistics, warehousing, and manufacturing (Lin et al.
+2024; Yao et al. 2025). As real-world applications grow
+more complex, the number of items that need to be planned
+for 3D-PP has significantly increased. There is an urgent demand for a scalable packing method to solve offline 3D-PP
+involving large numbers of items.
+The offline 3D-PP is known as an NP-hard problem (Bortfeldt and Wascher 2013), focusing on packing a set of ¨
+cuboid-shaped items into cuboid-shaped containers, aiming
+to maximize the space utilization. The NP-hard nature of
+the problem prevents it from being solved exactly, as exact
+mathematical methods (Martello, Pisinger, and Vigo 2000;
+*Corresponding author.
+Copyright © 2026, Association for the Advancement of Artificial
+Intelligence (www.aaai.org). All rights reserved.
+Tsai, Wang, and Lin 2015) often suffer from heavy time
+consumption and suboptimal probabilities of finding feasible solutions. Hence, using heuristics to obtain approximate
+solutions within reduced time has been a predominant approach (Ali et al. 2022; Yang et al. 2024; Heßler, Hintsch,
+and Wienkamp 2025). However, heuristics usually rely on
+handcrafted rules, which limits their performance and makes
+them poorly adaptable to diverse packing scenarios (Pan,
+Chen, and Lin 2023).
+Recently, the powerful decision-making capability of
+deep reinforcement learning (DRL) has attracted studies to
+explore its application in offline 3D-PP (Hu et al. 2017;
+Duan et al. 2019). As a key advantage over conventional
+methods, DRL enables policy exploration during training,
+thereby obtaining high-quality solutions with minimal overhead during execution (Liu et al. 2023). Moreover, guided
+by appropriate reward signals, the agent can learn underlying packing patterns to adapt to various packing scenarios
+with improved performance. However, developing effective
+and scalable DRL-based packing methods remains challenging. On the one hand, the agent’s large action space for item
+placement causes difficulties in policy exploration, leading
+to degraded solution quality (Zhao et al. 2021). The dominant approach for this issue is to integrate heuristics to mask
+out unreasonable placement (Yang et al. 2023; Que, Yang,
+and Zhang 2023; Xu et al. 2023; Yin, Chen, and He 2024;
+Xiong et al. 2024; Wang et al. 2025), thus compressing the
+action space and enhancing exploration efficiency. However,
+such a heuristic-driven DRL paradigm explores within the
+narrow space limited by heuristic rules, which results in the
+neglect of many latent valid solutions and makes the agent
+prone to getting stuck in local optima. On the other hand,
+large numbers of items increase memory usage and computational complexity, as existing well-performing DRL-based
+methods primarily use attention mechanisms (Vaswani et al.
+2017) to encode items, whose computational overhead is
+susceptible to the sequence length.
+To address the above issues, this paper proposes an effective and scalable DRL-based method for solving the offline 3D-PP. Firstly, we develop an attention-based packQ-network (PQNet) to capture the dependencies among information regarding unpacked items, available spaces, and
+packed items to derive action values. Secondly, we propose a
+bidding-based multi-policy (BBMP) framework that considThe Fortieth AAAI Conference on Artificial Intelligence (AAAI-26)
+27861
+ers multiple packing directions to enrich the packing policy
+and explore more valid solutions while keeping high exploration efficiency. Finally, we divide all unpacked items into a
+processing set and a candidate set. A training-free dynamic
+candidate selection (DCS) framework is proposed to move
+the optimal candidate item into the processing set using the
+pre-trained BBMP model parameters. DCS framework incorporates comprehensive item information during execution with minimal computation overhead, thereby enhancing performance for large numbers of items. Extensive experimental results show that the proposed method achieves
+state-of-the-art performance on 3D-PP with 20∼1000 items.
+The method also exhibits generalization capabilities across
+varying container sizes and item numbers.
+Related Works
+Throughout the evolution of 3D-PP, numerous methods have
+emerged, which can be broadly categorized into five classes.
+1) Exact algorithms (Chen, Lee, and Shen 1995; Martello,
+Pisinger, and Vigo 2000) and 2) approximation algorithms
+(Chung, Garey, and Johnson 1982; Galvez et al. 2021) fo- ´
+cus on theoretically ensuring optimal and near-optimal solutions, but they are limited by high computational complexity
+and poor scalability for large-scale instances.
+3) Constructive heuristics aim to find feasible solutions
+based on handcrafted rules, which usually place items into
+spaces based on loading patterns (George and Robinson
+1980; Toffolo et al. 2017; Saraiva, Nepomuceno, and Pinheiro 2015; Yang et al. 2024), with these spaces being managed using specialized techniques (Bortfeldt, Gehring, and
+Mack 2003; Crainic, Perboli, and Tadei 2008; Parreno et al. ˜
+2008). However, the reliance on handcrafted rules makes
+them struggle to adapt to scenario changes.
+4) Search algorithms attempt to explore search spaces
+while adhering to constructive heuristic rules. Metaheuristic methods (Liu et al. 2011; Gonc¸alves and Resende
+2013; Liu et al. 2017; Shao and Xiao 2025) are commonly
+used to improve the quality of complete solutions iteratively.
+Tree search methods (Ren, Tian, and Sawaragi 2011) create
+solution branches based on the process of packing and selecting the best one among them. These methods are effective in finding high-quality solutions but come at the cost of
+significant time inefficiency.
+5) Deep reinforcement learning (DRL)-based methods are
+a class of methods that emerged recently as the flourishes of
+DRL. (Hu et al. 2017; Duan et al. 2019) first used the pointer
+network (Vinyals, Fortunato, and Jaitly 2015) as the policy
+network to solve the offline 3D-PP for minimizing the surface area of the bounding cuboid. Conditional query learning
+(CQL) (Li et al. 2020) solves the offline 3D-PP to minimize
+the variable container height (named 3D strip packing problem (3D-SPP)), by embedding previous actions as a conditional query to the attention model. Building upon CQL,
+recurrent CQL (RCQL) (Li et al. 2022) further manages a
+candidate queue with the head-of-queue items being moved
+to the processing set at each time step, thus scaling the number of planable items to thousands. (Jiang, Cao, and Zhang
+2023) improved CQL by introducing the sparse attention
+mechanism to reduce computational complexity. The action
+representation learning was employed to handle the large
+action space for placement. (Que, Yang, and Zhang 2023)
+learned a Transformer-based policy network to guide packing. A plane feature was introduced to represent the bin state
+and compressed the action space by heuristically downsampling these features. (Yin, Chen, and He 2024) constructed
+a two-stage policy network and heuristically enforced item
+packing along two orthogonal directions to compress the action space and enhance exploration efficiency. Most DRLbased methods cannot plan for large numbers of items while
+keeping high-quality solutions due to limited exploration
+space and high computational complexity. In this paper, we
+aim to propose an effective and scalable DRL-based method
+to address this issue.
+Preliminaries
+Problem Formulation
+We focus on the 3D-SPP, a variant of the offline 3D-PP
+aimed at minimizing container height. This section provides
+a detailed description of this problem.
+Given a cuboid-shaped container with a fixed length L,
+width W, and variable height, and a set I = {1, 2, . . . , N}
+of cuboid-shaped items along with their length li
+, width wi
+,
+and height hi of item i, the goal is to pack all items from
+I into the container within N time steps. At each time step,
+one item is selected from the set U ⊆ I to pack into the
+container (to move to the set P ⊆ I), where U records all
+remaining unpacked items, and P records all packed items.
+The packing space can be described in a Cartesian coordinate system with the origin located at the behind-left-bottom
+corner of the container. The vector (xi
+, yi
+, zi) represents the
+coordinate of the behind-left-bottom corner of the packed
+item i, while (l
+′
+i
+, w′
+i
+, h′
+i
+) represents its dimensions after be
+rotated and packed. The objective of 3D-SPP is to minimize
+container height (i.e., maximize the space utilization) after
+packing all the items in I:
+minimize max
+i∈I
+(zi + h
+′
+i
+). (1)
+Each packing operation must satisfy constraints such as nonoverlapping and boundary conditions, and the formal definition of 3D-SPP is provided in Appendix A.
+Markov Decision Process
+To learn an effective packing policy via DRL, we first formulate 3D-SPP as a Markov decision process (MDP) characterized by a tuple ⟨S, A, P, R, γ⟩, where S is a set of packing
+states; A is a set of packing actions; T : S × A → S is
+the deterministic transition function; R : S × A → R is the
+reward function; γ is the discount factor.
+In our formulation, the state st ∈ S at time step t consists
+of unpacked state s
+u
+t
+, packed state s
+p
+t
+, and space state s
+s
+t
+:
+s
+u
+t = {(li
+, wi
+, hi)|i ∈ U},
+s
+p
+t = {(xi
+, yi
+, zi
+, x′
+i
+, y′
+i
+, z′
+i
+, l′
+i
+, w′
+i
+, h′
+i
+)|i ∈ P},
+s
+s
+t = {(x
+s
+j
+, ys
+j
+, zs
+j
+, x′s
+j
+, y′s
+j
+, z′s
+j
+, ls
+j
+, ws
+j
+, hs
+j
+)|j ∈ E},
+(2)
+where (x
+′
+i
+, y′
+i
+, z′
+i
+) is the coordinate of the front-right-top
+corner of item i in P, (x
+s
+j
+, ys
+j
+, zs
+j
+), (x
+′s
+j
+, y′s
+j
+, z′s
+j
+), and
+27862
+(l
+s
+j
+, ws
+j
+, hs
+j
+) stand for the coordinate of the behind-leftbottom corner, the front-right-top corner, and the dimensions
+of space j, and the set E records all available spaces managed by EMS (Parreno et al. 2008). The action ˜ at ∈ A taken
+at time step t represents selecting an item from U and determining its rotation and placement. By embracing EMS, the
+decision for placement can be replaced by selecting space
+from E as the item can be placed at one corner of the selected
+space. As each item has 6 possible rotations, the action space
+size |A| = 6|U||E|. The reward function R is defined as the
+same as in (Li et al. 2020):
+(
+rt = gt−1 − gt,
+gt = LWHet −
+P
+i∈P
+(liwihi),
+(3)
+where Het = maxi∈P (zi + h
+′
+i
+). The goal of DRL is to optimize the policy π : S → A to maximize the expected return
+with the discount factor γ:
+J(π) = Eπ
+"X
+N
+t=1
+γ
+t−1
+rt
+#
+. (4)
+Method
+Pack-Q-Network
+To optimize the policy π, we use an iteratively updated action value function Q : S × A → R to guide the agent’s
+decision-making process. The Q-function estimates the expected return starting from a given state st and taking an
+action at under the current policy:
+Q
+π
+(st, at) = Est+1:N ,at+1:N
+"N
+X−t
+i=0
+γ
+i
+rt+i
+
+
+
+
+st, at
+#
+. (5)
+To find the optimal Q-function Q∗
+(s, a), we represent the
+function with a pack-Q-network (PQNet) parameterized by
+θ, and learn θ to minimize the squared TD error (Mnih et al.
+2015). Fig. 1 (a) illustrates PQNet, whose structure is similar to the policy network in (Xu et al. 2023). The main difference is that PQNet introduces an encoding of the packed
+items in the container to further represent the occupied area,
+and removes all position encodings because the unpacked
+items do not have a sequential property, while the packed
+and space states already contain the positional information.
+Specifically, several linear layers are used to encode the rotated unpacked state
+s
+ru
+t =Rotate(s
+u
+t
+)
+={(li
+, wi
+, hi),(li
+, hi
+, wi),(wi
+, li
+, hi),(wi
+, hi
+, li),
+(hi
+, li
+, wi),(hi
+, wi
+, li)|i ∈ U}.
+(6)
+The obtained sequence h
+ru,(0)
+t ∈ R
+6|U |×dm is then processed by a Transformer encoder to capture dependencies
+among items under various rotations:
+h
+ru,(l)
+t = FFB(MAB(h
+ru,(l−1)
+t
+, hru,(l−1)
+t
+)), (7)
+where h
+ru,(l)
+t
+represents the output of the encoding layer
+l ∈ {1, . . . , Ne}. The multi-head attention block (MAB) and
+feed-forward block (FFB) are defined as:
+
+MAB(X, Y ) = LN(X + MHA(X, Y, Y )),
+FFB(H) = LN(H + FF(H),
+(8)
+where LN, MHA, and FF refer to layer normalization, multihead attention layer, and feed-forward layer, respectively.
+Moreover, a Transformer encoder is used to encode s
+p
+t
+into h
+p,(Ne)
+t ∈ R
+|P|×dm, and several linear layers are used to
+encode s
+s
+t
+into h
+s,(0)
+t ∈ R
+|E|×dm. h
+p,(Ne)
+t
+and h
+s,(0)
+t
+are then
+fused by the Transformer decoder using a cross-attention
+mechanism to integrate packed items into space features:
+(
+H = MAB(h
+s,(l−1)
+t
+, hs,(l−1)
+t
+),
+h
+s,(l)
+t = FFB(MAB(H, hp,(Ne)
+t
+)),
+(9)
+where h
+s,(l)
+t
+represents the output of the decoding layer l ∈
+{1, . . . , Nd}.
+Finally, the dot product between vectors in h
+ru,(Ne)
+t
+and
+h
+s,(Nd)
+t
+is calculated to obtain a matrix M ∈ R
+6|U |×|E|
+. M
+can be used to determine a valid packing index (i.e., selecting which item to pack), rotation, and placement, as it allows
+the model to learn which features of the rotated unpacked
+items and spaces match most effectively. M is then flattened
+and multiplied by a feasibility mask (used to mask out infeasible packings), deriving action values Q(st, ·) ∈ R
+6|U ||E|
+.
+Bidding-Based Multi-Policy Framework
+The policy learned by a single PQNet has limitations because it dictates that each item must be placed at one corner
+of the space, resulting in the neglect of many valid solutions.
+In fact, the four corners of the bottom of the spaces should all
+be able to be placed. To explore more latent valid solutions,
+we propose a bidding-based multi-policy (BBMP) framework to allocate four policies to four PQNets, where each
+network is responsible for estimating the action values for
+packing items into one of the corners of spaces: the behindleft-bottom corner, the front-left-bottom corner, the frontright-bottom corner, and the behind-right-bottom corner. To
+avoid the non-stationary problem and conflicts among four
+policies, two special schemes are implemented: parameter
+sharing and action bidding.
+1) Parameter sharing is a commonly used scheme in
+multi-agent reinforcement learning, which effectively coordinates the behavior of homogeneous agents and enhances
+training efficiency (Li, Wang, and Xu 2025; Chen et al.
+2025). By treating each PQNet as an independent agent,
+we can homogenize the four PQNets by adjusting their observations individually. Specifically, for a given state st =
+⟨s
+u
+t
+, s
+p
+t
+, ss
+t
+⟩, the observations of the four PQNets are adjusted
+as follows:
+
+
+
+o
+1
+t = ⟨o
+u
+t
+, o
+p,1
+t
+, o
+s,1
+t
+⟩ ∈ O1
+,
+o
+u
+t = {(li, wi, hi)|i ∈ U},
+o
+p,1
+t = {(xi, yi, zi, x′
+i
+, y′
+i
+, z′
+i
+, l′
+i
+, w′
+i
+, h′
+i)|i ∈ P},
+o
+s,1
+t = {(x
+s
+j
+, ys
+j
+, zs
+j
+, x′s
+j
+, y′s
+j
+, z′s
+j
+, ls
+j
+, ws
+j
+, hs
+j )|j ∈ E},
+(10)
+
+
+
+o
+2
+t = ⟨o
+u
+t
+, o
+p,2
+t
+, o
+s,2
+t
+⟩ ∈ O2
+,
+o
+u
+t = {(li, wi, hi)|i ∈ U},
+o
+p,2
+t = {(L − x
+′
+i
+, yi, zi, L − xi, y′
+i
+, z′
+i
+, l′
+i
+, w′
+i
+, h′
+i)|i ∈ P},
+o
+s,2
+t = {(L − x
+′s
+j
+, ys
+j
+, zs
+j
+, L − x
+s
+j
+, y′s
+j
+, z′s
+j
+, ls
+j
+, ws
+j
+, hs
+j )|j ∈ E},
+(11)
+27863
+1
+ot
+2
+ot
+3 ot
+4
+ot
+PQNet 2 PQNet 3 PQNet 4
+... ... ... ... 2 Qo2( , ) t 
+3 Qo3( , ) t 
+4 Qo4( , ) t 
+... ... ... ...
+Rotate
+X Y
+×N e
+Linear
+MAB
+FFB
+X Y
+×N d
+Linear
+MAB
+FFB
+X Y
+×N e
+Linear
+MAB
+MAB FFB
+X Y
+Dot product
+Flatten
+×
+...
+Mask
+...
+Feed-forward
+Add & Norm
+MAB FFB
+Multi-head
+attention
+Add & Norm
+q k v
+X Y
+Multi-head
+attention
+Add & Norm
+q k v
+X Y
+MAB
+Multi-head
+attention
+Add & Norm
+q k v
+X Y
+PQNet 1
+1 Qo1( , ) t 
+,( ) e ru N ht
+( , ) pack Qbid t o 
+(a) (b) () u u
+t t s o
+, () sk
+t
+s
+t s o
+, () pk
+t
+p
+t s o
+,( ) d sN ht
+
+,( ) pNe ht
+
+(, )[ ( , )]
+k Q t Qo kt s  
+Processing items Container
+... ru,( ) 0 ht
+ru
+t s
+Figure 1: (a) Pack-Q-network (PQNet). Inputs and outputs are marked red for a single PQNet, which are replaced with blue for
+bidding-based multi-policy framework. (b) Bidding-based multi-policy (BBMP) framework.
+PQNet 4
+PQNet 1
+PQNet 2 PQNet 3
+X-axis
+Y-axis
+Z-axis
+Coordinate origin
+Figure 2: Observations of the four PQNets.
+
+
+
+o
+3
+t = ⟨o
+u
+t
+, o
+p,3
+t
+, o
+s,3
+t
+⟩ ∈ O3
+,
+o
+u
+t = {(li, wi, hi)|i ∈ U},
+o
+p,3
+t = {(L−x
+′
+i
+, W−y
+′
+i
+, zi, L−xi, W−yi, z′
+i
+, l′
+i
+, w′
+i
+, h′
+i)|i∈P},
+o
+s,3
+t ={(L−x
+′s
+j
+, W−y
+′s
+j
+, zs
+j
+, L−x
+s
+j
+, W−y
+s
+j
+, z′s
+j
+, ls
+j
+, ws
+j
+, hs
+j )|j∈E},
+(12)
+
+
+
+o
+4
+t = ⟨o
+u
+t
+, o
+p,4
+t
+, o
+s,4
+t
+⟩ ∈ O4
+,
+o
+u
+t = {(li, wi, hi)|i ∈ U},
+o
+p,4
+t = {(xi, W − y
+′
+i
+, zi, x′
+i
+, W − yi, z′
+i
+, l′
+i
+, w′
+i
+, h′
+i)|i ∈ P},
+o
+s,4
+t ={(x
+s
+j
+, W −y
+′s
+j
+, zs
+j
+, x′s
+j
+, W − y
+s
+j
+, z′s
+j
+, ls
+j
+, ws
+j
+, hs
+j )|j ∈ E}.
+(13)
+The above adjustment is equivalent to having the four
+PQNets observe the environment in coordinate systems with
+origins located at the four corners of the container, as shown
+in Fig. 2. Each PQNet learns a Q-function for its assigned
+coordinate system, ensuring they are homogeneous and enabling parameter sharing across them.
+2) Action bidding is introduced to address the conflicts
+among multiple polices attempting to select the same item
+or place items in overlapping area. Specifically, we collect all action values computed by the four PQNets and
+select one and only one action from them as the final action. Let Qk(o
+k
+, ak
+) represents the Q-function of the PQNet
+k ∈ {1, 2, 3, 4} from a given observation o
+k ∈ Ok
+and
+taking an action a
+k ∈ Ak
+, where a
+k
+represents packing an
+item into spaces’ corner closest to the origin corresponding
+to PQNet k, we have the bidding Q-function:
+Qbid(o
+pack, apack) = Qk(o
+k
+, ak
+), if a
+pack ∈ Ak
+, (14)
+where o
+pack = ⟨o
+1
+, o2
+, o3
+, o4
+⟩ = ⟨o
+u
+,⟨o
+p,k, os,k⟩
+4
+k=1⟩ represents the joint observation, and a
+pack ∈
+S4
+k=1 Ak
+represents the possible final action that can be selected.
+The overall setup of the BBMP framework is shown in
+Fig. 1 (b). Each PQNet k receives o
+k
+t
+as input and derives
+its action values Qk(o
+k
+t
+, ·) at time step t. We concatenate
+Q1(o
+1
+t
+, ·) ∼ Q4(o
+4
+t
+, ·) to form the bidding action values
+Qbid(o
+pack
+t
+, ·). The action a
+pack
+t ∈
+S4
+k=1 Ak guided by Qbid
+integrates considerations of four policies while ensuring that
+decisions are coordinated and conflict-free.
+Dynamic Candidate Selection Framework
+The computational complexity of attention mechanisms increase dramatically with the number of items. (Li et al.
+2022) proposed storing most items in a candidate queue,
+with the head-of-queue items being moved to the processing
+set at each time step. Although this approach increases the
+number of processable items to thousands, it introduces performance degradation by neglecting items outside the processing set during decision-making. We believe fully considering all the information in the candidate queue contributes
+27864
+to improving performance, and to this end, propose a dynamic candidate selection (DCS) framework.
+Before the packing task begins (i.e., U = I and P = Ø),
+we divide the set of unpacked items U into two parts:
+Uproc =
+
+{1, 2, . . . , Nmax}, if Nmax < N,
+{1, 2, . . . , N}, otherwise,
+(15)
+Ucand =
+
+{Nmax + 1, . . . , N}, if Nmax < N,
+Ø, otherwise,
+(16)
+where Uproc and Ucand represent the processing set and candidate set, respectively, and Nmax is the maximum number
+of items that can be processed by the BBMP framework,
+limited by the memory usage during training. At each time
+step, one item is selected from Uproc to pack, and one candidate item is selected from Ucand (if any) to move to Uproc.
+We aim to learn an optimal function Q∗
+sel to guide the selection of candidate items for moving to Uproc. At each time
+step t after packing one item ip, Q∗
+sel receives the observation o
+sel
+t = ⟨o
+cand
+t
+, o
+proc
+t
+′ ,⟨o
+p,k
+t+1, o
+s,k
+t+1⟩
+4
+k=1⟩ and outputs
+action values Q∗
+sel(o
+sel
+t
+, ·), where the candidate observation
+o
+cand
+t = {(li
+, wi
+, hi)|i ∈ Ucand}, the processing observation o
+proc
+t
+′ = {(li
+, wi
+, hi)|i ∈ Uproc \ {ip}}, and t
+′
+represents an intermediate step between t and t + 1. Each action
+a
+sel
+t ∈ Asel (|Asel| = |Ucand|) represents selecting an item
+from Ucand to move to Uproc. Unfortunately, learning Q∗
+sel
+is challenging as |Ucand| can be extremely large, which leads
+to memory exhaustion during training. To overcome this issue, we devise a training-free DCS framework as shown in
+Fig. 3, where the parameters of linear layers, MAB, and FFB
+are derived from the pre-trained BBMP model.
+Firstly, the rotation operations followed by several linear layers are employed to encode o
+cand
+t
+and o
+proc
+t
+′ into
+h
+cand,(0)
+t ∈ R
+6|Ucand|×dm and h
+proc,(0)
+t
+′ ∈ R
+6(|Uproc|−1)×dm,
+respectively. For each layer l ∈ {1, . . . , Ne}, perform:
+h
+cand,(l)
+t = FFB(MAB(h
+cand,(l−1)
+t
+, hproc,(l−1)
+t
+′ )), (17)
+h
+proc,(l)
+t
+′ = FFB(MAB(h
+proc,(l−1)
+t
+′ , hproc,(l−1)
+t
+′ )). (18)
+The output h
+cand,(Ne)
+t ∈ R
+6|Ucand|×dm of the final layer encodes the features of all items in Ucand as if they were individually moved to Uproc. This is achieved because all information of items in Ucand serves as the query in the attention
+layers, while the information of items in Uproc \ {ip} is used
+as key-value pairs for relevance computation. This operation
+mirrors the actual process that would occur at t+ 1 step after
+individually moving these candidate items to Uproc.
+Subsequently, the vectors in h
+cand,(Ne)
+t
+are respectively calculated the dot product with the vectors in
+h
+s,1,(Nd)
+t+1 , hs,2,(Nd)
+t+1 , hs,3,(Nd)
+t+1 , hs,4,(Nd)
+t+1 ∈ R
+|E′
+|×dm, where
+h
+s,k,(Nd)
+t+1 represents the intermediate variable h
+s,(Nd)
+t+1 of the
+PQNet k by taking ⟨o
+p,k
+t+1, o
+s,k
+t+1⟩ as input, and E
+′
+represents
+the space set at time step t + 1. Each resulting matrix Mk ∈
+R
+6|Ucand|×|E′
+|
+is then reshaped to dimensions|Ucand|×6|E′
+|.
+The maximum value is taken along the second dimension of
+Rotate
+X Y
+×N e
+Linear
+MAB
+FFB
+Dot
+product
+Max
+...
+MAB
+FFB
+X Y
+Rotate
+Linear
+Dot
+product
+Dot
+product
+Dot
+product
+Max Max Max
+Max
+,( ) e cand N ht
+,1,( )
+1
+d sN ht +
+,2,( )
+1
+d sN ht +
+,3,( )
+1
+d sN ht +
+,4,( )
+1
+d sNht +
+cand
+ot
+( , ) sel Qsel t o 
+1 Qsel
+2 Qsel
+3 Qsel
+4 Qsel
+cand,( ) 0 ht
+proc ot
+proc,( ) 0 ht M1 M2 M3 M4
+Figure 3: Dynamic candidate selection (DCS) framework.
+Mk
+to derive action values Qk
+sel(o
+sel,k
+t
+, ·) ∈ R
+|Ucand|
+, where
+o
+sel,k
+t = ⟨o
+cand
+t
+, o
+proc
+t
+′ , o
+p,k
+t+1, o
+s,k
+t+1⟩. Qk
+sel records the maximum action value that each item in Ucand can derive when
+moved to Uproc at t + 1 time step evaluated by the PQNet k.
+Finally, we take the maximum action value for each candidate item across the four PQNets, deriving
+Qsel(o
+sel
+t
+, ·) = { max
+k∈{1,2,3,4}
+Q
+k
+sel(o
+sel,k
+t
+, a)|a ∈ Asel}.
+(19)
+Qsel can approximate Q∗
+sel for selecting candidate items, as
+it directly reflects the maximum potential value that would
+result from moving the candidate item to Uproc.
+The overall structure of our method, which combines
+BBMP and DCS frameworks, is shown in Fig. 4. Each time
+step the packing process is divided into two steps: 1) using
+BBMP framework to guide the packing of an item in Uproc,
+and 2) using DCS framework to guide the selection of an
+item in Ucand to move to Uproc. The detailed training and
+execution procedures are provided in Appendix B.
+Experiments
+Experimental Settings
+Following the common data generation rules (Jiang, Cao,
+and Zhang 2023; Que, Yang, and Zhang 2023; Yin,
+Chen, and He 2024), we randomly sample the length,
+width, and height of each item within ranges [L/10, L/2],
+[W/10, W/2], and [min(L/10, W/10), max(L/2, W/2)],
+respectively. The container size L × W is set to
+100×100, 200×200, and 400×200. The item number N
+is set to {20, 30, 40, 50, 100, 120} and further extended to
+{200, 500, 1000} to evaluate scalability for large numbers of
+items. The detailed hyperparameter configurations and experimental environments are provided in Appendix C.
+Several packing methods are used as baselines for comparison with our method: 1) Extreme points (EP) (Crainic,
+Perboli, and Tadei 2008); 2) Largest area first fit (LAFF)
+27865
+BBMP framework
+u
+ot
+Candidate items Processing items Container
+( , ) pack Qbid t o 
+DCS framework
+cand
+ot
+,,
+11
+4
+1
+,
+p k s k oo tt ++ k =  , 4
+1
+,
+,
+p k s k oo tt k= 
+... ...
+... ...
+... ... ( , ) sel Qsel t o  proc ot
+Figure 4: Overall structure of our method.
+(Gurbuz et al. 2009); 3) Biased random key genetic algorithm (BRKGA) (Gonc¸alves and Resende 2013); 4) Multitask selected learning (MTSL) (Duan et al. 2019); 5) Conditional query learning (CQL) (Li et al. 2020); 6) Recurrent conditional query learning (RCQL) (Li et al. 2022); 7)
+JIANG (Jiang, Cao, and Zhang 2023); 8) QUE (Que, Yang,
+and Zhang 2023); 9) YIN (Yin, Chen, and He 2024). In the
+above methods, EP and LAFF are constructive heuristics,
+BRKGA is a search algorithm, while MTSL, CQL, RCQL,
+JIANG, QUE, and YIN are DRL-based methods.
+Experimental Results
+Comparison Table 1 presents the average space utilization and computation time (noted in parentheses) results of
+various methods on discrete instances with 20 ∼ 1000 items
+and the 100 × 100 container. The results of each method
+are averaged over 1024 uniformly sampled instances. The
+”-” symbol in the table indicates that the method requires
+excessive computation time or cannot be solved under general hardware conditions. Note that RCQL focuses more on
+instances with large numbers of items; therefore, its performance on instances with N ≤ 50 is not reported. To ensure
+comparative fairness and validity, our method is evaluated
+through 10 independent trials with distinct random datasets
+sampled from the same distribution. The results (provided in
+Appendix D) exhibit low variance (< 10−6
+) across all trials,
+and the mean value is adopted as the final outcome.
+Table 1 illustrates that our method requires shorter computational time compared to most DRL-based methods. This
+primarily stems from our deterministic policy that always selects the optimal action for the current state, as opposed to
+policy-based methods, which sample multiple solutions and
+select the best outcome. Existing DRL-based methods and
+heuristic methods demonstrate space utilization advantages
+for N ≤ 120 and N > 120, respectively. However, no single
+20
+items
+30
+items
+EP LAFF BRKGA YIN OUR
+62.5% 54.6% 69.0% 79.4% 84.6%
+59.6% 56.1% 70.8% 79.7% 86.0%
+50
+items
+70.2% 72.9% 77.7% 84.0% 90.9%
+Figure 5: Visualization for packing results.
+method delivers high-quality solutions across all item numbers. Heuristic methods fail to efficiently arrange packing
+space for small numbers of items (as visualized in Fig. 5),
+while most DRL-based methods cannot plan large numbers
+of items due to high computational complexity. Our method,
+in contrast, delivers high-quality solutions for arbitrary N,
+achieving 3.2%∼13.1% higher space utilization compared
+to the best-performing method for each N. This is primarily
+attributed to the capabilities of PQNet and the BBMP framework to efficiently explore more valid solutions, as well as
+the capability of the DCS framework to effectively plan large
+numbers of items with minimal computation overhead. Fig.
+5 visualizes the packing results of several methods for the
+same instance with 20, 30, and 50 items. It can be observed
+that our method fully uses the container space and plans a
+relatively flat top surface, thus reducing space wastage.
+We further evaluate the space utilization of methods
+on instances with 50 items and larger-size containers. As
+recorded in Table 2, our method achieves state-of-the-art
+performance even for 200×200 and 400×200 containers,
+demonstrating its capability to handle tasks requiring more
+precise item sizes and more diverse item types.
+Generality By employing the attention mechanism
+(Vaswani et al. 2017) for encoding state and the EMS
+heuristic (Parreno et al. 2008) for managing spaces, our ˜
+method can handle arbitrary numbers of items and container
+sizes without modifying the network configurations. Fig.
+6 illustrates the generalization test results of the model
+trained with 50 items and 100 × 100 container (denoted
+as OUR50
+100×100) on instances with different item numbers
+and container sizes. When the number of items changes
+modestly (N = 20, 30, 100, or 120), OUR50
+100×100 exhibits
+a minor decline in space utilization compared to models
+trained on corresponding instances. When N ≥ 500, the
+space utilization of OUR50
+100×100 declines markedly. This is
+because, for small numbers of items, the model tends to prioritize forming flat top surfaces at lower heights, while for
+large numbers, it may sacrifice early-stage regularity to en27866
+N EP LAFF BRKGA MTSL CQL RCQL JIANG QUE YIN OUR
+20 66.5(<1) 54.4(<1) 66.6(7.5) 62.4(4.8) 67.0(1.0) - 71.8(1.2) 76.5(1.4) 79.2(3.5) 82.4(0.6)
+30 70.3(<1) 60.0(<1) 70.5(15.5) 60.1(10.2) 69.3(1.2) - 75.5(1.5) 79.3(2.1) 81.5(5.9) 85.3(0.9)
+50 73.6(<1) 66.4(<1) 73.9(36.2) 55.3(23.0) 73.6(3.3) - 81.3(3.8) 82.4(3.5) 84.1(9.9) 89.1(1.5)
+100 76.3(<1) 74.4(<1) 77.1(106.3) - - 71.0(1.6) 84.4(12.4) - - 92.8(5.4)
+120 76.6(<1) 76.3(<1) 77.9(141.1) - - 71.4(1.8) 84.8(15.2) - - 93.2(6.7)
+200 77.8(2.5) 81.0(<1) - - - 72.4(2.8) - - - 94.1(11.6)
+500 79.0(38.0) 86.9(<1) - - - 73.2(6.9) - - - 95.4(31.9)
+1000 79.4(312.7) 90.0(1.2) - - - 74.0(13.6) - - - 96.0(66.3)
+Table 1: Average space utilization (%) and computation time (second) results across varying item numbers.
+Method 100 × 100 200 × 200 400 × 200
+EP 73.6 72.6 70.6
+LAFF 66.4 64.7 67.1
+BRKGA 73.9 72.9 72.1
+MTSL 55.3 50.8 46.9
+CQL 73.6 58.7 47.5
+JIANG 81.3 75.2 70.5
+QUE 82.4 80.5 76.7
+YIN 84.1 80.8 77.1
+OUR 89.1 88.8 87.0
+Table 2: Average space utilization (%) results across varying
+container sizes.
+20
+30
+50
+100
+120
+500
+1000
+100×100
+200×200
+400×400
+800×800
+1000×1000
+50
+60
+70
+80
+90
+100
+Container Size
+Space Utilization (%)
+Item Num
+Figure 6: Generalization results. The square bars correspond
+to OUR50
+100×100, while the cylindrical bars correspond to
+models trained on their corresponding instances. The numerical values are the difference between the two.
+hance global packing efficiency. On the other hand, changes
+in container size have minimal impact on OUR50
+100×100. This
+robustness stems from the model’s capability to abstract
+spatial relationships proportionally rather than relying on
+absolute coordinates. Additional generalization experiments
+on item distributions are provided in Appendix D.
+Ablation To validate the effectiveness of components in
+our method, we conduct ablation studies on instances with
+the 100 × 100 container, by removing or modifying each
+component while keeping other settings unchanged. As ilMethod N = 20 N = 30 N = 50
+OUR 82.4 85.3 89.1
+-PQNet 81.4 84.8 88.4
+-BBMP 81.0 84.7 88.4
+Table 3: Ablation results on PQNet and BBMP.
+Method N = 100 N = 200 N = 500 N = 1000
+OUR 92.8 94.1 95.4 96.0
+-DCS 92.3 93.5 94.1 94.5
+Table 4: Ablation results on DCS.
+lustrated in Table 3, the absence of PQNet (-PQNet, i.e.,
+using the same network structure as (Xu et al. 2023)) and
+BBMP framework (-BBMP, i.e., using only a single PQNet)
+both lead to declines in space utilization. This is because encoding packed items enables the network to understand occupied area within the container, offering essential insights
+for more precise value estimates. The BBMP framework, on
+the other hand, provides more valid placements compared
+to a single PQNet, enriching packing policy and exploring
+more valid solutions. Table 4 illustrates that the absence of
+DCS framework (-DCS, i.e., using candidate queue) also
+leads to a decline in space utilization, with the decline becoming more pronounced as N increases. This trend can be
+explained as larger numbers of candidate items providing
+more selection possibilities for DCS framework, enabling it
+to adjust a more favorable Uproc.
+Conclusion
+This paper proposes a scalable DRL-based method to solve
+the offline 3D-PP of diverse scales. The proposed method
+demonstrates superior space utilization performance across
+various scales of 3D-PP tasks compared to existing methods, attributed to its three core components: PQNet, BBMP
+framework, and DCS framework. Furthermore, the solution
+exhibits robust generalization to varying container sizes and
+item numbers. Challenges remain in handling real-world dynamic online packing scenarios. Extending the framework to
+incorporate realistic constraints and adaptive reward mechanisms can further improve its applicability.
+27867
+Acknowledgments
+This work was partly supported by the National Natural Science Foundation of China (NSFC) under Grant U1936113
+and Grant 61872303; and in part by Doctoral Innovation Fund Program of Southwest Jiaotong University under
+Grant CX2025YB10.
+References
+Ali, S.; Ramos, A. G.; Carravilla, M. A.; and Oliveira, J. F.
+2022. On-line three-dimensional packing problems: A review of off-line and on-line solution approaches. Computers
+& Industrial Engineering, 168: 108122.
+Bortfeldt, A.; Gehring, H.; and Mack, D. 2003. A parallel tabu search algorithm for solving the container loading
+problem. Parallel Computing, 29(5): 641–662.
+Bortfeldt, A.; and Wascher, G. 2013. Constraints in con- ¨
+tainer loading - A state-of-the-art review. European Journal
+of Operational Research, 229(1): 1–20.
+Chen, C.; Lee, S.; and Shen, Q. 1995. An analytical model
+for the container loading problem. European Journal of Operational Research, 80(1): 68–76.
+Chen, Y.; Yang, K.; Tao, J.; and Lyu, J. 2025. NoveltyGuided Data Reuse for Efficient and Diversified MultiAgent Reinforcement Learning. In Proceedings of the AAAI
+Conference on Artificial Intelligence, volume 39, 15930–
+15938. Philadelphia, USA.
+Chung, F. R.; Garey, M. R.; and Johnson, D. S. 1982. On
+packing two-dimensional bins. SIAM Journal of Algebraic
+Discrete Methods, 3(1): 66–76.
+Crainic, T. G.; Perboli, G.; and Tadei, R. 2008. Extreme
+Point-Based Heuristics for Three-Dimensional Bin Packing.
+INFORMS Journal on Computing, 20(3): 368–384.
+Duan, L.; Hu, H.; Qian, Y.; Gong, Y.; Zhang, X.; Xu,
+Y.; and Wei, J. 2019. A Multi-task Selected Learning
+Approach for Solving 3D Flexible Bin Packing Problem.
+arXiv:1804.06896.
+George, J. A.; and Robinson, D. F. 1980. A heuristic for
+packing boxes into a container. Computers & Operations
+Research, 7(3): 147–156.
+Gonc¸alves, J. F.; and Resende, M. G. 2013. A biased
+random key genetic algorithm for 2D and 3D bin packing
+problems. International Journal of Production Economics,
+145(2): 500–510.
+Gurbuz, M. Z.; Akyokus, S.; Emiroglu, I.; and Guran, A.
+2009. An Efficient Algorithm for 3D Rectangular Box Packing. In Applied Automatic Systems: Proceedings of Selected
+AAS 2009 Paper, 131–134.
+Galvez, W.; Grandoni, F.; Ingala, S.; Heydrich, S.; Khan, A.; ´
+and Wiese, A. 2021. Approximating Geometric Knapsack
+via L-packings. ACM Transactions on Algorithms, 17(4):
+1–67.
+Heßler, K.; Hintsch, T.; and Wienkamp, L. 2025. A fast
+optimization approach for a complex real-life 3D multiple
+bin Size Bin Packing Problem. European Journal of Operational Research.
+Hu, H.; Zhang, X.; Yan, X.; Wang, L.; and Xu, Y. 2017.
+Solving a new 3D bin packing problem with deep reinforcement learning method. arXiv:1708.05930.
+Jiang, Y.; Cao, Z.; and Zhang, J. 2023. Learning to Solve 3-
+D Bin Packing Problem via Deep Reinforcement Learning
+and Constraint Programming. IEEE Transactions on Cybernetics, 53(5): 2864–2875.
+Li, D.; Gu, Z.; Wang, Y.; Ren, C.; and Lau, F. C. 2022. One
+model packs thousands of items with Recurrent Conditional
+Query Learning. Knowledge-Based Systems, 235: 107683.
+Li, D.; Ren, C.; Gu, Z.; Wang, Y.; and Lau, F. C. 2020.
+Solving Packing Problems by Conditional Query Learning.
+https://openreview.net/forum?id=BkgTwRNtPB. Accessed:
+2019-09-26.
+Li, M.; Wang, Q.; and Xu, Y. 2025. Gtde: Grouped training with decentralized execution for multi-agent actor-critic.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 39, 18368–18376. Philadelphia, USA.
+Lin, B.; Li, J.; Cui, T.; Jin, H.; Bai, R.; Qu, R.; and Garibaldi,
+J. 2024. A pattern-based algorithm with fuzzy logic bin selector for online bin packing problem. Expert Systems with
+Applications, 249: 123515.
+Liu, J.; Yue, Y.; Dong, Z.; Maple, C.; and Keech, M. 2011.
+A novel hybrid tabu search approach to container loading.
+Computers & Operations Research, 38(4): 797–807.
+Liu, K.; Zhang, H.; Zhang, Y.; and Sun, C. 2023. False DataInjection Attack Detection in Cyber–Physical Systems With
+Unknown Parameters: A Deep Reinforcement Learning Approach. IEEE Transactions on Cybernetics, 53(11): 7115–
+7125.
+Liu, S.; Shang, X.; Cheng, C.; Zhao, H.; Shen, D.; and Wang,
+F. 2017. Heuristic algorithm for the container loading problem with multiple constraints. Computers & Industrial Engineering, 108: 149–164.
+Martello, S.; Pisinger, D.; and Vigo, D. 2000. The threedimensional bin packing problem. Operations Research,
+48(2): 256–267.
+Mnih, V.; Kavukcuoglu, K.; Silver, D.; Rusu, A. A.; Veness, J.; Bellemare, M. G.; Graves, A.; Riedmiller, M.; Fidjeland, A. K.; Ostrovski, G.; et al. 2015. Human-level control
+through deep reinforcement learning. Nature, 518(7540):
+529–533.
+Pan, Y.; Chen, Y.; and Lin, F. 2023. Adjustable robust reinforcement learning for online 3d bin packing. Advances in
+Neural Information Processing Systems, 36: 51926–51954.
+Parreno, F.; Alvarez-Vald ˜ es, R.; Tamarit, J. M.; and Oliveira, ´
+J. F. 2008. A maximal-space algorithm for the container
+loading problem. INFORMS Journal on Computing, 20(3):
+412–422.
+Que, Q.; Yang, F.; and Zhang, D. 2023. Solving 3D packing problem using Transformer network and reinforcement
+learning. Expert Systems with Applications, 214: 119153.
+Ren, J.; Tian, Y.; and Sawaragi, T. 2011. A tree search
+method for the container loading problem with shipment priority. Computers & Industrial Engineering, 214(3): 526–
+535.
+27868
+Saraiva, R. D.; Nepomuceno, N.; and Pinheiro, P. R. 2015. A
+layer-building algorithm for the three-dimensional multiple
+bin packing problem: a case study in an automotive company. IFAC-PapersOnLine, 48(3): 490–495.
+Shao, X.; and Xiao, L. 2025. Research on Packing Problem
+Based on Improved Ant Colony Algorithm. In International
+Conference on Sensors and Information Technology, 361–
+364. Nanjing, China.
+Toffolo, T. A.; Esprit, E.; Wauters, T.; and Berghe, G. V.
+2017. A two-dimensional heuristic decomposition approach
+to a three-dimensional multiple container loading problem.
+European Journal of Operational Research, 257(2): 526–
+538.
+Tsai, J.; Wang, P.; and Lin, M. 2015. A global optimization approach for solving three-dimensional open dimension rectangular packing problems. Journal of Optimization,
+64(12): 2601–2618.
+Vaswani, A.; Shazeer, N.; Parmar, N.; Uszkoreit, J.; Jones,
+L.; Gomez, A. N.; Kaiser, L.; and Polosukhin, I. 2017. Attention is All you Need. Advances in Neural Information
+Processing Systems, 30.
+Vinyals, O.; Fortunato, M.; and Jaitly, N. 2015. Pointer Networks. Advances in Neural Information Processing Systems,
+28: 2692–2700.
+Wang, B.; Lin, Z.; Kong, W.; and Dong, H. 2025. Bin packing optimization via deep reinforcement learning. IEEE
+Robotics and Automation Letters, 10(3): 2542–2549.
+Xiong, H.; Guo, C.; Peng, J.; Ding, K.; Chen, W.; Qiu, X.;
+Bai, L.; and Xu, J. 2024. GOPT: Generalizable online 3D
+bin packing via transformer-based deep reinforcement learning. IEEE Robotics and Automation Letters, 9(11): 10335–
+10342.
+Xu, J.; Gong, M.; Zhang, H.; Huang, H.; and Hu, R. 2023.
+Neural Packing: from Visual Sensing to Reinforcement
+Learning. ACM Transactions on Graphics, 42(6).
+Yang, S.; Song, S.; Chu, S.; Song, R.; Cheng, J.; Li, Y.; and
+Zhang, W. 2023. Heuristics Integrated Deep Reinforcement
+Learning for Online 3D Bin Packing. IEEE Transactions on
+Automation Science and Engineering, 1(1): 1–12.
+Yang, Y.; Wu, Z.; Hao, X.; Liu, H.; and Qi, M. 2024.
+Two-layer heuristic for the three-dimensional bin design and
+packing problem. Engineering Optimization, 56(10): 1601–
+1638.
+Yao, S.; Liu, F.; Lin, X.; Lu, Z.; Wang, Z.; and Zhang, Q.
+2025. Multi-objective evolution of heuristic using large language model. In Proceedings of the AAAI Conference on
+Artificial Intelligence, volume 39, 27144–27152. Philadelphia, USA.
+Yin, H.; Chen, F.; and He, H. 2024. Solving Offline 3D Bin
+Packing Problem with Large-sized Bin via Two-stage Deep
+Reinforcement Learning. In Proceedings of the 23rd International Conference on Autonomous Agents and Multiagent
+Systems, 2576–2578. Auckland, New Zealand.
+Zhao, H.; She, Q.; Zhu, C.; Yang, Y.; and Xu, K. 2021. Online 3D Bin Packing with Constrained Deep Reinforcement
+Learning. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 35, 741–749. Virtual, Online.
+27869
+
+
+Code
+import time
+
+import torch
+from torch.autograd import Variable
+from torch.utils.data import DataLoader
+from torchvision.utils import save_image
+from tqdm import tqdm
+import config
+from datas.DataGenerator import ItemDataset
+from DQN import DQN
+from tensorboardX import SummaryWriter
+import numpy as np
+from Pack import Pack
+from datetime import datetime
+import os
+
+class BBMP_DCS:
+    def __init__(self, args):
+        self.args = args
+        self.dqn = DQN(args)
+        self.dataset = ItemDataset(args)
+        self.dataloader = DataLoader(self.dataset,
+                                     batch_size=self.args.col_batch_size,
+                                     shuffle=True,
+                                     num_workers=0)
+
+        self.device = torch.device('cuda:' + self.args.gpu_ids) if self.args.gpu_ids != '-1' else torch.device('cpu')
+        if args.load_model:
+            self.dqn.pred_net.load_state_dict(torch.load(args.model_path))
+            self.dqn.target_net.load_state_dict(torch.load(args.model_path))
+        self.max_u = 0
+        self.train_step = 0
+
+    def train(self, ckpt_dir):
+
+        for epoch in range(self.args.train_epochs):
+            iterator = tqdm(self.dataloader, unit='Batch')
+            for i_batch, sample_batched in enumerate(iterator):
+                iterator.set_description('epoch %i, episode %i' % (epoch, i_batch))
+                item = sample_batched
+                state_proc_item = item[:, 0: args.item_num - args.cand_item_num, :].to(self.device)
+                if args.cand_item_num != 0:
+                    state_cand_item = item[:, -args.cand_item_num:, :].to(self.device)
+                else:
+                    state_cand_item = torch.zeros([args.col_batch_size, 1, 3]).to(self.device)
+
+                max_H = torch.sum(torch.max(item, dim=2)[0], dim=1)
+                bin = torch.tensor([self.args.bin_length, self.args.bin_width]).unsqueeze(0).repeat(self.args.col_batch_size, 1)
+                state_space = torch.cat((torch.zeros([self.args.col_batch_size, 3]), bin, max_H.unsqueeze(1), bin, max_H.unsqueeze(1)), dim=1).unsqueeze(1)
+                state_space = torch.cat((state_space, torch.zeros([self.args.col_batch_size, self.args.max_deal_space_num - 1, 9])), dim=1).to(self.device)
+                state_pack = torch.zeros([self.args.col_batch_size, min(args.item_num, args.max_deal_pack_num), 9], device=self.device)
+                state_pack_col = torch.zeros([self.args.col_batch_size, args.item_num, 9], device=self.device)
+
+                '''
+                state_proc_item: (l, w, h) for each item in processing set
+                state_cand_item: (l, w, h) for each item in candidate set
+                state_pack: (x, y, z, x', y', w', l', w', h') for each item in packed set
+                state_pack_col: (x, y, z, x', y', w', l', w', h') for each item in full packed set
+                state_space: (x, y, z, x', y', w', l', w', h') for each space
+                '''
+
+                for step in range(self.args.item_num):
+                    action_, action_size = self.dqn.choose_action(state_proc_item, state_space, state_pack, evaluate=False)
+                    id = (action_ / action_size).long()
+                    action = action_ % action_size
+                    idx_io = (action / state_space.size(1)).long()
+                    idx_s = (action % state_space.size(1)).long()
+                    state_packs = self.dqn.rotate_pack(state_pack)
+                    state_packs_col = self.dqn.rotate_pack(state_pack_col)
+                    state_spaces = self.dqn.rotate_space(state_space)
+
+                    state_pack = torch.gather(state_packs,
+                                               0,
+                                               (id % 4).view(1, -1, 1, 1).repeat(1, 1, state_packs.size(2), state_packs.size(3))).squeeze(0)
+                    state_pack_col = torch.gather(state_packs_col,
+                                              0,
+                                              (id % 4).view(1, -1, 1, 1).repeat(1, 1, state_packs_col.size(2),
+                                                                                state_packs_col.size(3))).squeeze(0)
+                    state_space = torch.gather(state_spaces,
+                                              0,
+                                              (id % 4).view(1, -1, 1, 1).repeat(1, 1, state_spaces.size(2), state_spaces.size(3))).squeeze(0)
+
+
+                    state_proc_item_, state_space_, state_pack_, state_pack_col_ = Pack.update_state(state_proc_item,
+                                                                                                      state_space,
+                                                                                                      state_pack,
+                                                                                                      state_pack_col,
+                                                                                                      action)
+                    # action_cand = self.dqn.chose_action_cand(state_proc_item_, state_pack_, state_space_, state_cand_item)
+                    action_cand = None
+                    state_proc_item_, state_cand_item_ = Pack.update_state_cand(state_proc_item_, state_space, state_cand_item, action, action_cand)
+                    rewards = Pack.cal_reward(state_pack_col, state_pack_col_, self.args.bin_length, self.args.bin_width)
+
+                    if torch.count_nonzero(state_proc_item_) == 0:
+                        V = torch.sum(torch.prod(state_pack_col_[:, :, 6:9], 2), dim=1)
+                        H = torch.max(state_pack_col_[:, :, 5], dim=1)[0]
+                        L, W = args.bin_length, args.bin_width
+                        g = V / (L * W * H)
+                        if self.train_step > 0 and args.use_tensorboard:
+                            writer.add_scalar(
+                                'data/utilization_{}_{}_{}_{}'.format(args.bin_length, args.bin_width, args.item_num, args.cand_item_num),
+                                g.mean().item(), self.train_step)
+                        print(g, f'Avg u: {g.mean().item()}')
+
+                    for i in range(self.args.col_batch_size):
+                        state = [state_proc_item[i].data.cpu().numpy(),
+                                 state_space[i].data.cpu().numpy(),
+                                 state_pack[i].data.cpu().numpy()]
+                        state_ = [state_proc_item_[i].data.cpu().numpy(),
+                                  state_space_[i].data.cpu().numpy(),
+                                  state_pack_[i].data.cpu().numpy()]
+                        action = [idx_io[i].item(),
+                                  idx_s[i].item()]
+
+                        reward = rewards[i].detach().data.cpu().numpy()
+                        done = torch.count_nonzero(state_proc_item_) == 0
+
+                        self.dqn.store_transition(state, action, reward, state_, done)
+
+                    if (int(0) <= self.dqn.memory_counter) and (self.dqn.memory_counter % 4 == 0):
+                        loss = self.dqn.learn()
+                        self.train_step += 1
+
+                    state_proc_item = state_proc_item_
+                    state_cand_item = state_cand_item_
+                    state_pack_col = state_pack_col_
+                    state_space = state_space_
+                    state_pack = state_pack_
+            self.dqn.save_model(ckpt_dir + '/Q_{}_{}_{}.pth'.format(args.bin_length, args.bin_width, args.item_num)
+                                    + datetime.now().strftime("%Y%m%d_%H%M%S"))
+
+    def evaluate(self):
+        dataset_eva = ItemDataset(args, eva=True)
+        dataloader_eva = DataLoader(dataset_eva,
+                                         batch_size=1,
+                                         shuffle=False,
+                                         num_workers=0)
+        U = []
+        iterator = tqdm(dataloader_eva, unit='Batch')
+        for i_batch, sample_batched in enumerate(iterator):
+            iterator.set_description('episode %i' % (i_batch))
+            item = sample_batched
+            state_proc_item = item[:, 0: args.item_num - args.cand_item_num, :].to(self.device)
+            if args.cand_item_num != 0:
+                state_cand_item = item[:, -args.cand_item_num:, :].to(self.device)
+            else:
+                state_cand_item = torch.zeros([1, 1, 3]).to(self.device)
+
+            max_H = torch.sum(torch.max(item, dim=2)[0], dim=1)
+            bin = torch.tensor([self.args.bin_length, self.args.bin_width]).unsqueeze(0).repeat(1, 1)
+            state_space = torch.cat((torch.zeros([1, 3]), bin, max_H.unsqueeze(1), bin, max_H.unsqueeze(1)), dim=1).unsqueeze(1)
+            state_space = torch.cat((state_space, torch.zeros([1, self.args.max_deal_space_num - 1, 9])), dim=1).to(self.device)
+            state_pack = torch.zeros([1, min(args.item_num, args.max_deal_pack_num), 9], device=self.device)
+            state_pack_col = torch.zeros([self.args.col_batch_size, args.item_num, 9], device=self.device)
+
+            '''
+            state_proc_item: (l, w, h) for each item in processing set
+            state_cand_item: (l, w, h) for each item in candidate set
+            state_pack: (x, y, z, x', y', w', l', w', h') for each item in packed set
+            state_pack_col: (x, y, z, x', y', w', l', w', h') for each item in full packed set
+            state_space: (x, y, z, x', y', w', l', w', h') for each space
+            '''
+            for step in range(self.args.item_num):
+
+                action_, action_size = self.dqn.choose_action(state_proc_item, state_space, state_pack, evaluate=True)
+                id = (action_ / action_size).long()
+                action = action_ % action_size
+
+                state_packs = self.dqn.rotate_pack(state_pack)
+                state_spaces = self.dqn.rotate_space(state_space)
+                state_packs_col = self.dqn.rotate_pack(state_pack_col)
+
+                state_pack = torch.gather(state_packs,
+                                           0,
+                                           (id % 4).view(1, -1, 1, 1).repeat(1, 1, state_packs.size(2), state_packs.size(3))).squeeze(0)
+                state_space = torch.gather(state_spaces,
+                                          0,
+                                          (id % 4).view(1, -1, 1, 1).repeat(1, 1, state_spaces.size(2), state_spaces.size(3))).squeeze(0)
+                state_pack_col = torch.gather(state_packs_col,
+                                              0,
+                                              (id % 4).view(1, -1, 1, 1).repeat(1, 1, state_packs_col.size(2),
+                                                                                state_packs_col.size(3))).squeeze(0)
+
+                state_proc_item_, state_space_, state_pack_, state_pack_col_ = Pack.update_state(
+                    state_proc_item,
+                    state_space,
+                    state_pack,
+                    state_pack_col,
+                    action,
+                )
+                if args.cand_item_num != 0:
+                    action_cand = self.dqn.chose_action_cand(state_proc_item_, state_pack_, state_space_, state_cand_item)
+                else:
+                    action_cand = None
+                state_proc_item_, state_cand_item_ = Pack.update_state_cand(state_proc_item_, state_space, state_cand_item, action, action_cand)
+
+                if torch.count_nonzero(state_proc_item_) == 0:
+                    V = torch.sum(torch.prod(state_pack_col_[:, :, 6:9], 2), dim=1)
+                    H = torch.max(state_pack_col_[:, :, 5], dim=1)[0]
+                    L, W = args.bin_length, args.bin_width
+                    g = V / (L * W * H)
+                    U.append(g.item())
+                    print(f'Eps UR: {g.item()}, Avg UR: {sum(U)/len(U)}, Var: {np.var(U)}')
+
+                state_proc_item = state_proc_item_
+                state_cand_item = state_cand_item_
+                state_space = state_space_
+                state_pack = state_pack_
+                state_pack_col = state_pack_col_
+
+def create_experiment_dirs(exp_name, base_dir="runs"):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    exp_dir = os.path.join(base_dir, f"{exp_name}_{timestamp}")
+
+    logs_dir = os.path.join(exp_dir, "logs")
+    ckpt_dir = os.path.join(exp_dir, "checkpoints")
+
+    os.makedirs(logs_dir, exist_ok=True)
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    return exp_dir, logs_dir, ckpt_dir
+
+if __name__ == '__main__':
+    args = config.Args().get_parser()
+
+    model = BBMP_DCS(args)
+    if args.evaluate:
+        model.evaluate()
+    else:
+        print('Please input the experiment name: ')
+        exp_name = input()
+        exp_dir, logs_dir, ckpt_dir = create_experiment_dirs(exp_name)
+        if args.use_tensorboard:
+            writer = SummaryWriter(log_dir=logs_dir)
+        model.train(ckpt_dir)
+        if args.use_tensorboard:
+            writer.close()
+
+
+import torch
+import torch.nn as nn
+
+
+class QNetwork(nn.Module):
+    def __init__(self, args):
+        super(QNetwork, self).__init__()
+        self.args = args
+        self.device = torch.device('cuda:' + self.args.gpu_ids) if self.args.gpu_ids != '-1' else torch.device('cpu')
+        self.item_encoder = ItemEncoder(hidden_size=args.hidden_size,
+                                        inner_hidden_size=args.inner_hidden_size,
+                                        attn_head_num=args.attn_head_num,
+                                        attn_layer_num=args.attn_layer_num)
+        self.pack_encoder = PackEncoder(hidden_size=args.hidden_size,
+                                        inner_hidden_size=args.inner_hidden_size,
+                                        attn_head_num=args.attn_head_num,
+                                        attn_layer_num=args.attn_layer_num)
+        self.space_decoder = SpaceDecoder(hidden_size=args.hidden_size,
+                                          inner_hidden_size=args.inner_hidden_size,
+                                          attn_head_num=args.attn_head_num,
+                                          attn_layer_num=args.attn_layer_num)
+
+    def forward(self, state_proc_item, state_space, state_pack):
+        key_padding_mask_space = torch.all(state_space == 0, dim=2)
+        key_padding_mask_pack = torch.all(state_pack == 0, dim=2)
+        idx = torch.all(key_padding_mask_pack, dim=1)
+        key_padding_mask_pack[:, 0] = torch.where(idx, torch.zeros_like(idx), key_padding_mask_pack[:, 0])
+
+        h_i, state_item_allr = self.item_encoder.forward(state_proc_item)
+        h_p = self.pack_encoder(state_pack, key_padding_mask_pack)
+        h_s = self.space_decoder.forward(state_space, h_p, key_padding_mask_space, key_padding_mask_pack)
+        n_i, n_s = h_i.size(1), h_s.size(1)
+        score = torch.bmm(h_i, h_s.permute(0, 2, 1))
+
+        if state_proc_item.size(1) > 0:
+            less_than_mask = state_space[:, :, 6:9].unsqueeze(1).repeat(1, n_i, 1, 1) >= state_item_allr.unsqueeze(2).repeat(1, 1, n_s, 1)
+            mask1 = less_than_mask.all(dim=-1)  # batch, n_i, n_s
+            mask2 = torch.any(state_item_allr > 0, dim=2).unsqueeze(2).repeat(1, 1, n_s)
+            mask3 = torch.any(state_space > 0, dim=2).unsqueeze(1).repeat(1, n_i, 1)
+            score[~(mask1 * mask2 * mask3)] = torch.tensor(float('-inf')).to(state_proc_item.device)
+
+        q = score.reshape(-1, n_i * n_s)
+        idx = torch.all(torch.isinf(q), dim=1).unsqueeze(1).repeat(1, n_i * n_s)
+        q = torch.where(idx, torch.zeros_like(q), q)
+
+        return q
+
+    def forward_cand(self, state_item, state_cand_item, state_space, h_s):
+        h_cand, state_item_cand_allr = self.item_encoder.forward_cand(state_item, state_cand_item)
+        n_cand, n_s = h_cand.size(1), h_s.size(1)
+        score = torch.bmm(h_cand, h_s.permute(0, 2, 1))
+        if torch.count_nonzero(state_cand_item) > 0:
+            less_than_mask = state_space[:, :, 6:9].unsqueeze(1).repeat(1, n_cand, 1, 1) >= state_item_cand_allr.unsqueeze(2).repeat(1, 1, n_s, 1)
+            mask1 = less_than_mask.all(dim=-1)  # batch, n_i, n_s
+            mask2 = torch.any(state_item_cand_allr > 0, dim=2).unsqueeze(2).repeat(1, 1, n_s)
+            mask3 = torch.any(state_space > 0, dim=2).unsqueeze(1).repeat(1, n_cand, 1)
+            score[~(mask1 * mask2 * mask3)] = torch.tensor(float('-inf')).to(state_item.device)
+        q_cand = torch.max(score, dim=2)[0]
+        return q_cand
+
+
+class ItemEncoder(nn.Module):
+    def __init__(self, hidden_size=128, inner_hidden_size=512, attn_head_num=8, attn_layer_num=2):
+        super(ItemEncoder, self).__init__()
+        self.attn_layer_num = attn_layer_num
+        self.attn_head_num = attn_head_num
+        self.hidden_size = hidden_size
+        self.embedding = nn.Sequential(
+            nn.Linear(3, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+        self.MHAs = nn.ModuleList(
+            [nn.MultiheadAttention(hidden_size, attn_head_num, batch_first=True) for _ in range(attn_layer_num)])
+        self.FFs = nn.ModuleList([nn.Sequential(
+            nn.Linear(hidden_size, inner_hidden_size),
+            nn.ReLU(),
+            nn.Linear(inner_hidden_size, hidden_size)
+        ) for _ in range(attn_layer_num)])
+        self.norm1s = nn.ModuleList([nn.LayerNorm(hidden_size) for _ in range(attn_layer_num)])
+        self.norm2s = nn.ModuleList([nn.LayerNorm(hidden_size) for _ in range(attn_layer_num)])
+
+    def forward(self, state_item):
+        l = state_item.size(1)
+        batch_size = state_item.size(0)
+        if torch.count_nonzero(state_item) == 0:
+            return torch.zeros([batch_size, 1, self.hidden_size]).to(state_item.device), None
+
+        sequence = [0, 1, 2, 0, 2, 1, 1, 0, 2, 1, 2, 0, 2, 0, 1, 2, 1, 0]
+        inx_allr = torch.tensor(sequence, dtype=torch.long).reshape(6, 3).cuda()
+        inx_allr = inx_allr.repeat(l, 1).unsqueeze(0).repeat(batch_size, 1, 1)
+        state_item_allr = state_item.repeat(1, 1, 6).reshape(batch_size, 6 * l, 3)
+        state_item_allr = torch.gather(state_item_allr, 2, inx_allr)
+        key_padding_mask = torch.all(state_item_allr == 0, dim=2)
+
+        attn_mask = torch.eye(l, device='cuda:0').repeat(1, 6).reshape(6 * l, l)
+        attn_mask = attn_mask.transpose(0, 1).repeat(1, 6).reshape(6 * l, 6 * l) - torch.eye(6 * l, device=state_item.device)
+        attn_mask = attn_mask * (-1e8)
+        attn_mask = attn_mask.unsqueeze(0).repeat(batch_size * self.attn_head_num, 1, 1)
+        h = self.embedding(state_item_allr)
+        for i in range(self.attn_layer_num):
+            h = self.norm1s[i](h + self.MHAs[i](h, h, h, attn_mask=attn_mask, key_padding_mask=key_padding_mask)[0])
+            h = self.norm2s[i](h + self.FFs[i](h))
+        h_i = h
+        return h_i, state_item_allr
+
+    def forward_cand(self, state_proc_item, state_item_cand):
+        l = state_proc_item.size(1)
+        l_cand = state_item_cand.size(1)
+        batch_size = state_proc_item.size(0)
+        if torch.count_nonzero(state_proc_item) == 0 or torch.count_nonzero(state_item_cand) == 0:
+            return torch.zeros([batch_size, 1, self.hidden_size]).to(state_proc_item.device), None
+
+        sequence = [0, 1, 2, 0, 2, 1, 1, 0, 2, 1, 2, 0, 2, 0, 1, 2, 1, 0]
+        inx_allr = torch.tensor(sequence, dtype=torch.long).reshape(6, 3).cuda()
+        inx_allr = inx_allr.repeat(l, 1).unsqueeze(0).repeat(batch_size, 1, 1)
+        state_item_allr = state_proc_item.repeat(1, 1, 6).reshape(batch_size, 6 * l, 3)
+        state_item_allr = torch.gather(state_item_allr, 2, inx_allr)
+
+        # cand_zero = torch.all(state_item_cand == 0, dim=2)
+        # cand_zero_idx = torch.where(~cand_zero.squeeze())[0]  # 取反并获取索引
+        # state_item_cand_nonzero = state_item_cand[:, ~cand_zero_idx.squeeze(), :]
+        inx_allr = torch.tensor(sequence, dtype=torch.long).reshape(6, 3).cuda()
+        inx_allr = inx_allr.repeat(l_cand, 1).unsqueeze(0).repeat(batch_size, 1, 1)
+        state_item_cand_allr = state_item_cand.repeat(1, 1, 6).reshape(batch_size, 6 * l_cand, 3)
+        state_item_cand_allr = torch.gather(state_item_cand_allr, 2, inx_allr)
+        key_padding_mask = torch.all(state_item_allr == 0, dim=2)
+
+        attn_mask = torch.eye(l, device='cuda:0').repeat(1, 6).reshape(6 * l, l)
+        attn_mask = attn_mask.transpose(0, 1).repeat(1, 6).reshape(6 * l, 6 * l) - torch.eye(6 * l,
+                                                                                             device=state_proc_item.device)
+        attn_mask = attn_mask * (-1e8)
+        attn_mask = attn_mask.unsqueeze(0).repeat(batch_size * self.attn_head_num, 1, 1)
+
+        h = self.embedding(state_item_allr)
+        h_cand = self.embedding(state_item_cand_allr)
+        for i in range(self.attn_layer_num):
+            h_cand = self.norm1s[i](h_cand + self.MHAs[i](h_cand, h, h, key_padding_mask=key_padding_mask)[0])
+            h_cand = self.norm2s[i](h_cand + self.FFs[i](h_cand))
+
+            h = self.norm1s[i](h + self.MHAs[i](h, h, h, attn_mask=attn_mask, key_padding_mask=key_padding_mask)[0])
+            h = self.norm2s[i](h + self.FFs[i](h))
+        return h_cand, state_item_cand_allr
+
+
+class PackEncoder(nn.Module):
+    def __init__(self, hidden_size=128, inner_hidden_size=512, attn_head_num=8, attn_layer_num=2):
+        super(PackEncoder, self).__init__()
+        self.attn_layer_num = attn_layer_num
+        self.hidden_size = hidden_size
+        self.embedding = nn.Sequential(
+            nn.Linear(9, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+        self.MHAs = nn.ModuleList(
+            [nn.MultiheadAttention(hidden_size, attn_head_num, batch_first=True) for _ in range(attn_layer_num)])
+        self.FFs = nn.ModuleList([nn.Sequential(
+            nn.Linear(hidden_size, inner_hidden_size),
+            nn.ReLU(),
+            nn.Linear(inner_hidden_size, hidden_size)
+        ) for _ in range(attn_layer_num)])
+        self.norm1s = nn.ModuleList([nn.LayerNorm(hidden_size) for _ in range(attn_layer_num)])
+        self.norm2s = nn.ModuleList([nn.LayerNorm(hidden_size) for _ in range(attn_layer_num)])
+
+    def forward(self, state_pack, key_padding_mask_pack):
+        if torch.count_nonzero(state_pack) == 0:
+            return torch.zeros([state_pack.size(0), state_pack.size(1), self.hidden_size]).cuda()
+        h = self.embedding(state_pack)
+        for i in range(self.attn_layer_num):
+            h = self.norm1s[i](h + self.MHAs[i](h, h, h, key_padding_mask=key_padding_mask_pack)[0])
+            h = self.norm2s[i](h + self.FFs[i](h))
+        h_p = h
+        return h_p
+
+
+class SpaceDecoder(nn.Module):
+    def __init__(self, hidden_size=128, inner_hidden_size=512, attn_head_num=8, attn_layer_num=2):
+        super(SpaceDecoder, self).__init__()
+        self.attn_layer_num = attn_layer_num
+        self.embedding = nn.Sequential(
+            nn.Linear(9, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+        self.MHA1s = nn.ModuleList(
+            [nn.MultiheadAttention(hidden_size, attn_head_num, batch_first=True) for _ in range(attn_layer_num)])
+        self.MHA2s = nn.ModuleList(
+            [nn.MultiheadAttention(hidden_size, attn_head_num, batch_first=True) for _ in range(attn_layer_num)])
+        self.FFs = nn.ModuleList([nn.Sequential(
+            nn.Linear(hidden_size, inner_hidden_size),
+            nn.ReLU(),
+            nn.Linear(inner_hidden_size, hidden_size)
+        ) for _ in range(attn_layer_num)])
+        self.linears = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+        self.norm1s = nn.ModuleList([nn.LayerNorm(hidden_size) for _ in range(attn_layer_num)])
+        self.norm2s = nn.ModuleList([nn.LayerNorm(hidden_size) for _ in range(attn_layer_num)])
+        self.norm3s = nn.ModuleList([nn.LayerNorm(hidden_size) for _ in range(attn_layer_num)])
+
+    def forward(self, state_space, h_p, key_padding_mask_space, key_padding_mask_pack):
+        h = self.embedding(state_space)
+        for i in range(self.attn_layer_num):
+            h = self.norm1s[i](h + self.MHA1s[i](h, h, h, key_padding_mask=key_padding_mask_space)[0])
+            h = self.norm2s[i](h + self.MHA2s[i](h, h_p, h_p, key_padding_mask=key_padding_mask_pack)[0])
+            h = self.norm3s[i](h + self.FFs[i](h))
+        out = self.linears(h)
+        return out
+
+
+import random
+class ReplayMemory:
+    def __init__(self, memory_size=100000, per=False):
+        self.states = {'proc_items': [None for _ in range(memory_size)],
+                       'spaces': [None for _ in range(memory_size)],
+                       'packs': [None for _ in range(memory_size)]}
+        self.next_states = {'proc_items': [None for _ in range(memory_size)],
+                       'spaces': [None for _ in range(memory_size)],
+                       'packs': [None for _ in range(memory_size)]}
+        self.actions = {
+            'idx_io': np.zeros(memory_size),
+            'idx_s': np.zeros(memory_size),
+            'idx_cand': np.zeros(memory_size)
+        }
+        self.rewards = np.zeros(memory_size)
+        self.terminals = np.zeros(memory_size)
+        self.count = 0
+        self.current = 0
+        self.memory_size = memory_size
+    def add(self, state, action, reward, next_state, terminal):
+        self.rewards[self.current] = reward
+        self.terminals[self.current] = terminal
+        self.actions['idx_io'][self.current] = action[0]
+        self.actions['idx_s'][self.current] = action[1]
+        self.states['proc_items'][self.current] = state[0]
+        self.states['spaces'][self.current] = state[1]
+        self.states['packs'][self.current] = state[2]
+        self.next_states['proc_items'][self.current] = next_state[0]
+        self.next_states['spaces'][self.current] = next_state[1]
+        self.next_states['packs'][self.current] = next_state[2]
+        self.current = (self.current + 1) % self.memory_size
+        self.count += 1
+    def sample(self, batch_size):
+        state_batch = {'proc_items': [None for _ in range(batch_size)],
+                       'spaces': [None for _ in range(batch_size)],
+                       'packs': [None for _ in range(batch_size)]}
+        reward_batch = []
+        action_batch = {
+            'idx_io': np.zeros(batch_size),
+            'idx_s': np.zeros(batch_size),
+        }
+        terminal_batch = []
+        next_state_batch = {'proc_items': [None for _ in range(batch_size)],
+                       'spaces': [None for _ in range(batch_size)],
+                       'packs': [None for _ in range(batch_size)]}
+        for i in range(batch_size):
+            data_index = random.randint(0, self.current-1 if self.count < self.memory_size else self.memory_size-1)
+            reward_batch.append(self.rewards[data_index])
+            action_batch['idx_io'][i] = self.actions['idx_io'][data_index]
+            action_batch['idx_s'][i] = self.actions['idx_s'][data_index]
+            terminal_batch.append(self.terminals[data_index])
+            state_batch['proc_items'][i] = self.states['proc_items'][data_index]
+            state_batch['spaces'][i] = self.states['spaces'][data_index]
+            state_batch['packs'][i] = self.states['packs'][data_index]
+            next_state_batch['proc_items'][i] = self.next_states['proc_items'][data_index]
+            next_state_batch['spaces'][i] = self.next_states['spaces'][data_index]
+            next_state_batch['packs'][i] = self.next_states['packs'][data_index]
+        return state_batch, reward_batch, action_batch, next_state_batch, terminal_batch

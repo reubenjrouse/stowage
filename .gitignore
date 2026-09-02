@@ -1,0 +1,10 @@
+# virtualenv -- ~25k files, and it's rebuildable from requirements.txt
+venv/
+
+# python bytecode
+__pycache__/
+*.pyc
+
+# training artifacts
+tb_logs/
+*.zip
