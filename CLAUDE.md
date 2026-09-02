@@ -29,16 +29,36 @@ WHAT'S BUILT AND VERIFIED
 - Greedy first-fit baseline that also uses rotation (fair comparison).
 - Self-tests (python environment.py): mask invariant over 50 episodes.
 
-NUMBERS (30 boxes, 10x10x10 container, 6 orientations)
-- Random-but-legal:   52.0% fill   (the floor)
-- Greedy baseline:    85.2% fill   (the bar)
-- Trained agent:      87.5% fill   at 540k steps -- BEATS THE BASELINE
-- Curve: 0.510 -> 0.875, crossed greedy at ~475k steps, still climbing.
-- boxes_placed stayed flat at ~17 the whole time: all the gain is
-  placement QUALITY, not grabbing more boxes.
-NOTE: that 87.5% is the training running-average. A completed run with a
-deterministic eval on held-out seeds is still needed for a citable number
-(the 540k run died to a power cut before saving -- hence checkpointing).
+FINAL VALIDATED RESULTS (1M steps, randomised training, Sep 2026)
+Paired evaluation -- agent and greedy on IDENTICAL seeds/box sets, 200 eps
+(the built-in eval in train.py compares on DIFFERENT seed ranges, which is
+valid but noisier; the paired numbers below are the ones to quote):
+
+  setting                greedy   agent   paired diff    t     agent wins
+  fixed 30 / 10x10x10    85.2%    88.2%   +2.95pp       6.9    66% of eps
+  randomised             84.7%    89.4%   +4.70pp       7.5    67% of eps
+
+MECHANISM (why it wins -- not a fluke):
+  trapped void   greedy 5.7%  -> agent 2.6%   (seals half the dead air)
+  boxes placed   greedy 14.7  -> agent 16.2   (so more boxes fit)
+  Exactly the causal chain the compaction reward was built to create.
+
+TRAINING HEALTH (all normal): explained_variance 0.09 -> 0.972, approx_kl
+steady 0.013-0.029, clip_fraction 0.19-0.27, value_loss falling monotonically,
+entropy -6.03 -> -1.35. Fill plateaued at 0.89-0.90 from ~670k steps, so
+1M was enough and more training buys little.
+
+KNOWN LIMITATION -- GENERALISATION IS RANGE-BOUND
+Trained on containers 6-10 per side and 15-30 boxes. Outside that:
+  tiny 5x5x5 containers (below range)  greedy 83.4%  agent 80.1%  -3.3pp  LOSES
+  few boxes, 5-12 (below range)        greedy 62.8%  agent 64.1%  +1.3pp  thin
+  fixed 10x10x10, 30 boxes (in range)  greedy 85.2%  agent 87.9%  +2.8pp  fine
+The reference paper reports the same shape of failure (its Fig. 6: utilisation
+drops once item count moves far from training). IF free-play mode must accept
+small containers, widen grid_range/height_range and retrain (~1 hour);
+otherwise constrain the app UI to the trained range.
+NOT TESTED: the rotation ablation needs its OWN trained model, because
+n_rotations=1 changes the action space (3,000 vs 18,000).
 
 THE THREE BUGS THAT COST THIS PROJECT DAYS -- DO NOT REPEAT
 1. SATURATED BENCHMARK. Original env: 8 boxes = 35% of container volume,
