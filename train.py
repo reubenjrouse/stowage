@@ -36,26 +36,51 @@ from policy import PackingPolicy
 
 
 class FillFractionCallback(BaseCallback):
-    """Logs the agent's average fill % (over the last 50 finished episodes)
-    to TensorBoard, so you can watch it trend up during training."""
+    """Logs fill %, BUCKETED BY CONTAINER SIZE.
 
-    def __init__(self, log_every: int = 500, verbose: int = 0):
+    A single average is close to useless once containers are randomised:
+    the agent scores ~100% on a 5x5x5 and ~84% on a 14x14x14, so a running
+    mean over 50 episodes mostly measures which containers happened to be
+    drawn, not whether the policy improved. Three buckets are each
+    comparable with themselves over time, so progress is actually visible.
+    Also logs the exact-solve rate, which is the number that matters for a
+    puzzle with a known 100% optimum.
+    """
+
+    def __init__(self, grid_cap: int = 14, log_every: int = 500, window: int = 200, verbose: int = 0):
         super().__init__(verbose)
         self.log_every = log_every
-        self.episode_fills: list[float] = []
-        self.episode_placed: list[int] = []
+        self.window = window
+        # thresholds relative to the biggest possible container, so the three
+        # buckets stay populated whatever range we train on
+        self.max_vol = grid_cap ** 3
+        self.buckets: dict = {"small": [], "mid": [], "large": []}
+        self.solved: list = []
+        self.placed: list = []
 
     def _on_step(self) -> bool:
         for done, info in zip(self.locals.get("dones", []), self.locals.get("infos", [])):
-            if done and "fill_fraction" in info:
-                self.episode_fills.append(info["fill_fraction"])
-                self.episode_placed.append(info.get("boxes_placed", 0))
+            if not (done and "fill_fraction" in info):
+                continue
+            fill = info["fill_fraction"]
+            gx, gy, h = info.get("container", (10, 10, 10))
+            frac = (gx * gy * h) / self.max_vol
+            key = "small" if frac < 0.4 else ("mid" if frac < 0.7 else "large")
+            self.buckets[key].append(fill)
+            self.solved.append(1.0 if fill > 0.9999 else 0.0)
+            self.placed.append(info.get("boxes_placed", 0))
 
-        if self.episode_fills and self.n_calls % self.log_every == 0:
-            self.logger.record("rollout/avg_fill_fraction", float(np.mean(self.episode_fills[-50:])))
-            self.logger.record("rollout/avg_boxes_placed", float(np.mean(self.episode_placed[-50:])))
-
+        if self.n_calls % self.log_every == 0:
+            for key, vals in self.buckets.items():
+                if vals:
+                    self.logger.record(f"rollout/fill_{key}", float(np.mean(vals[-self.window:])))
+            if self.solved:
+                self.logger.record("rollout/solve_rate", float(np.mean(self.solved[-self.window:])))
+                self.logger.record("rollout/avg_boxes_placed", float(np.mean(self.placed[-self.window:])))
+                allf = [v for vals in self.buckets.values() for v in vals[-self.window:]]
+                self.logger.record("rollout/avg_fill_fraction", float(np.mean(allf)))
         return True
+
 
 
 def check_device() -> str:
@@ -165,7 +190,7 @@ def main(
     # the only save happened after learn() returned. save_freq counts steps
     # PER ENV, so divide by n_envs to get an interval in total timesteps.
     callback = CallbackList([
-        FillFractionCallback(),
+        FillFractionCallback(grid_cap=grid_size),
         CheckpointCallback(
             save_freq=max(1, checkpoint_freq // n_envs),
             save_path="checkpoints",
