@@ -71,19 +71,38 @@ def check_device() -> str:
     return device
 
 
-def evaluate_agent(model: MaskablePPO, num_episodes: int, **env_kwargs) -> tuple[float, float]:
-    env = BinPackingEnv(**env_kwargs)
-    fills = []
+def paired_evaluate(model, num_episodes: int, **env_kwargs):
+    """Score agent and greedy on the SAME seeds, i.e. the SAME box sets.
+
+    The earlier version evaluated them on different seed ranges, which is
+    valid but noisy and invites the worry that one range was easier. Paired
+    differencing cancels the episode-to-episode variation entirely.
+    """
+    from baseline import greedy_first_fit_episode
+
+    genv = BinPackingEnv(**env_kwargs)
+    aenv = BinPackingEnv(**env_kwargs)
+    g, a, wins = [], [], 0
     for ep in range(num_episodes):
-        obs, _ = env.reset(seed=10_000 + ep)
-        done = False
-        info = {}
+        g.append(greedy_first_fit_episode(genv, seed=ep))
+
+        obs, _ = aenv.reset(seed=ep)
+        done, info = False, {}
         while not done:
-            action, _ = model.predict(obs, action_masks=env.action_masks(), deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
+            action, _ = model.predict(obs, action_masks=aenv.action_masks(), deterministic=True)
+            obs, _, terminated, truncated, info = aenv.step(action)
             done = terminated or truncated
-        fills.append(info["fill_fraction"])
-    return float(np.mean(fills)), float(np.std(fills))
+        a.append(info["fill_fraction"])
+        if a[-1] > g[-1]:
+            wins += 1
+
+    g, a = np.array(g), np.array(a)
+    diff = a - g
+    stderr = diff.std(ddof=1) / np.sqrt(num_episodes)
+    return dict(greedy=g.mean(), agent=a.mean(), diff=diff.mean(),
+                stderr=stderr, t=diff.mean() / stderr if stderr else 0.0,
+                win_rate=wins / num_episodes)
+
 
 
 def main(
@@ -100,9 +119,15 @@ def main(
     checkpoint_freq: int,
     resume: str,
     randomize: bool,
+    box_source: str,
+    grid_range: tuple,
+    boxes_range: tuple,
+    lr: float,
 ):
     device = check_device()
-    env_kwargs = dict(grid_size=grid_size, max_boxes=max_boxes, n_rotations=n_rotations, randomize=randomize)
+    env_kwargs = dict(grid_size=grid_size, max_height=grid_size, max_boxes=max_boxes,
+                      n_rotations=n_rotations, randomize=randomize, box_source=box_source,
+                      grid_range=grid_range, height_range=grid_range, boxes_range=boxes_range)
 
     # Profiling says ~95% of the per-step cost is env work (stepping plus
     # building the feasibility mask), which is pure Python/numpy and can't be
@@ -122,7 +147,8 @@ def main(
             verbose=1,
             device=device,
             tensorboard_log=log_dir,
-            ent_coef=ent_coef,
+                learning_rate=lambda progress: lr * progress,  # linear decay to 0
+        ent_coef=ent_coef,
             n_epochs=n_epochs,
             target_kl=target_kl,  # early-stop an update once it leaves the trust region
             policy_kwargs=dict(n_rotations=n_rotations, embed_dim=embed_dim),
@@ -162,35 +188,29 @@ def main(
     # Always score on the FIXED canonical setting so the headline number stays
     # comparable with every earlier run, and additionally on randomised
     # containers when we trained that way, to show it generalises.
-    settings = [("fixed: 30 boxes, 10x10x10", dict(env_kwargs, randomize=False))]
-    if randomize:
-        settings.append(("randomised: varied container + box count", dict(env_kwargs, randomize=True)))
+    settings = [("puzzle: perfect-fit pieces", dict(env_kwargs, box_source="perfect")),
+                ("random boxes", dict(env_kwargs, box_source="random"))]
 
     for label, kw in settings:
         print("")
-        print(f"Evaluating [{label}] over 200 episodes each...")
-        baseline_mean, baseline_std = evaluate_baseline(num_episodes=200, **kw)
-        agent_mean, agent_std = evaluate_agent(model, num_episodes=200, **kw)
-
-        gap = agent_mean - baseline_mean
-        # 200 episodes of a ~6% spread puts the standard error near 0.4pp, so
-        # anything under about 1pp of separation is a tie, not a win.
-        stderr = (agent_std**2 / 200 + baseline_std**2 / 200) ** 0.5
-        print(f"  Greedy baseline : {baseline_mean:.1%} avg fill (+/- {baseline_std:.1%})")
-        print(f"  PPO agent       : {agent_mean:.1%} avg fill (+/- {agent_std:.1%})")
-        print(f"  Difference      : {gap:+.1%} (standard error {stderr:.1%})")
-        if gap > 2 * stderr:
-            print("  PASS: the agent beats the greedy baseline.")
-        elif gap > -2 * stderr:
-            print("  TIE: matches the baseline but doesn't clearly beat it.")
+        print(f"[{label}] paired over 200 episodes (agent and greedy on identical box sets)")
+        r = paired_evaluate(model, 200, **kw)
+        print(f"  Greedy  : {r['greedy']:.1%}")
+        print(f"  Agent   : {r['agent']:.1%}")
+        print(f"  Diff    : {r['diff']:+.2%}  (se {r['stderr']:.2%}, t={r['t']:.1f})")
+        print(f"  Agent wins {r['win_rate']:.0%} of episodes")
+        if r['t'] > 2:
+            print("  PASS: the agent beats greedy.")
+        elif r['t'] > -2:
+            print("  TIE.")
         else:
-            print("  BEHIND: the baseline still wins here.")
+            print("  BEHIND.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--timesteps", type=int, default=1_000_000)
-    parser.add_argument("--grid-size", type=int, default=10)
+    parser.add_argument("--grid-size", type=int, default=14, help="container cap; also the height cap")
     parser.add_argument("--max-boxes", type=int, default=30)
     parser.add_argument("--log-dir", type=str, default="./tb_logs")
     parser.add_argument("--n-envs", type=int, default=8, help="parallel environments (subprocesses) for faster data collection")
@@ -200,7 +220,12 @@ if __name__ == "__main__":
     # staying undecided, which is part of why entropy never fell.
     parser.add_argument("--ent-coef", type=float, default=0.001, help="entropy bonus; scale it down as the action space grows")
     parser.add_argument("--n-epochs", type=int, default=5, help="PPO epochs per rollout; lower reduces over-clipping")
-    parser.add_argument("--embed-dim", type=int, default=64, help="embedding width for the box and position encoders")
+    parser.add_argument("--embed-dim", type=int, default=128, help="embedding width for the box and position encoders")
+    parser.add_argument("--box-source", type=str, default="mixed", choices=["random", "perfect", "mixed"],
+                        help="perfect = reverse-construction puzzles (the app mode); mixed handles both")
+    parser.add_argument("--grid-min", type=int, default=5, help="smallest container side to train on")
+    parser.add_argument("--boxes-min", type=int, default=8, help="fewest boxes per puzzle")
+    parser.add_argument("--lr", type=float, default=3e-4, help="initial learning rate (decays linearly to 0)")
     parser.add_argument("--randomize", action="store_true", help="randomise container size and box count each episode (Stage 3)")
     parser.add_argument("--checkpoint-freq", type=int, default=25_000, help="save a checkpoint every N timesteps")
     parser.add_argument("--resume", type=str, default=None, help="path to a checkpoint .zip to continue from")
@@ -226,4 +251,8 @@ if __name__ == "__main__":
         args.checkpoint_freq,
         args.resume,
         args.randomize,
+        args.box_source,
+        (args.grid_min, args.grid_size),
+        (args.boxes_min, args.max_boxes),
+        args.lr,
     )

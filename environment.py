@@ -57,6 +57,9 @@ class BinPackingEnv(gym.Env):
         grid_range: tuple[int, int] = (6, 10),
         height_range: tuple[int, int] = (6, 10),
         boxes_range: tuple[int, int] = (15, 30),
+        scale_boxes: bool = True,
+        box_source: str = "random",
+        min_piece: int = 2,
     ):
         super().__init__()
         if not 1 <= n_rotations <= 6:
@@ -102,6 +105,31 @@ class BinPackingEnv(gym.Env):
         self.cur_h = max_height
         self.n_active = max_boxes
 
+        # Box dims must SCALE WITH THE CONTAINER or the benchmark saturates:
+        # 30 boxes of 2-5 units total ~1305, which is 130% of a 10x10x10
+        # container (a real packing problem) but only 48% of a 14x14x14 one
+        # (everything fits anywhere -- exactly the dead benchmark that wasted
+        # the first days of this project). Sampling each dim in
+        # [0.2*side, 0.5*side], as the papers do, keeps the ratio near 130%
+        # at every container size -- and reproduces the validated 2-5 range
+        # exactly when the side is 10.
+        self.scale_boxes = scale_boxes
+
+        # BOX SOURCE
+        #  "random"  - independent random dims (what Stage 2/3 trained on)
+        #  "perfect" - REVERSE CONSTRUCTION: recursively cut the container into
+        #              pieces, so the boxes tile it EXACTLY and a 100% packing
+        #              is guaranteed to exist. This is the app's puzzle mode.
+        #  "mixed"   - half and half, so one agent handles both.
+        # A perfect partition IS reachable under drop-from-above: place the
+        # pieces in bottom-up order and each lands on a floor its neighbours
+        # have already filled exactly to its underside.
+        if box_source not in ("random", "perfect", "mixed"):
+            raise ValueError("box_source must be 'random', 'perfect' or 'mixed'")
+        self.box_source = box_source
+        self.min_piece = min_piece
+        self.solution = None
+
         # What the agent gets to see each step:
         #  - "boxes": (l, w, h) for each of the max_boxes boxes, normalized to
         #     [0, 1] by the container's dimensions. A box that's already been
@@ -114,6 +142,12 @@ class BinPackingEnv(gym.Env):
             {
                 "boxes": spaces.Box(low=0.0, high=1.0, shape=(max_boxes, 3), dtype=np.float32),
                 "heightmap": spaces.Box(low=0.0, high=1.0, shape=(grid_size, grid_size), dtype=np.float32),
+                # Everything else is normalised by the current container, which
+                # is what makes the policy scale-invariant -- but it also hides
+                # the ABSOLUTE size, and a 5-tall container behaves differently
+                # from a 14-tall one because the grid is discrete. Three scalars
+                # give that back.
+                "container": spaces.Box(low=0.0, high=1.0, shape=(3,), dtype=np.float32),
             }
         )
 
@@ -158,9 +192,48 @@ class BinPackingEnv(gym.Env):
     # ---------- internal helpers ----------
 
     def _sample_boxes(self) -> np.ndarray:
-        return self.np_random.integers(
-            self.min_box_dim, self.max_box_dim + 1, size=(self.max_boxes, 3)
-        ).astype(np.float32)
+        if not self.scale_boxes:
+            return self.np_random.integers(
+                self.min_box_dim, self.max_box_dim + 1, size=(self.max_boxes, 3)
+            ).astype(np.float32)
+
+        sides = (self.cur_gx, self.cur_gy, self.cur_h)
+        cols = []
+        for side in sides:
+            lo = max(1, int(round(0.2 * side)))
+            hi = max(lo + 1, int(round(0.5 * side)))
+            cols.append(self.np_random.integers(lo, hi + 1, size=self.max_boxes))
+        return np.stack(cols, axis=1).astype(np.float32)
+
+    def _perfect_partition(self, n_target: int) -> list:
+        """Cut the container into <= n_target boxes that tile it exactly.
+
+        Always splits the largest remaining piece, which keeps sizes balanced
+        instead of producing one slab and a cloud of crumbs. Returns
+        (x, y, z, l, w, h) per piece -- those positions ARE a guaranteed
+        perfect solution, which the app can offer as a hint.
+        """
+        m = self.min_piece
+        pieces = [(0, 0, 0, self.cur_gx, self.cur_gy, self.cur_h)]
+        while len(pieces) < n_target:
+            splittable = [i for i, p in enumerate(pieces) if any(p[3 + a] >= 2 * m for a in range(3))]
+            if not splittable:
+                break  # everything is already at the minimum piece size
+            i = max(splittable, key=lambda k: pieces[k][3] * pieces[k][4] * pieces[k][5])
+            x, y, z, l, w, h = pieces.pop(i)
+            dims = [l, w, h]
+            axes = [a for a in range(3) if dims[a] >= 2 * m]
+            axis = int(self.np_random.choice(axes))
+            cut = int(self.np_random.integers(m, dims[axis] - m + 1))
+
+            near, far = list(dims), list(dims)
+            near[axis] = cut
+            far[axis] = dims[axis] - cut
+            far_origin = [x, y, z]
+            far_origin[axis] += cut
+            pieces.append((x, y, z, near[0], near[1], near[2]))
+            pieces.append((far_origin[0], far_origin[1], far_origin[2], far[0], far[1], far[2]))
+        return pieces
 
     def _get_obs(self) -> dict:
         # Normalising by the CURRENT container makes the observation
@@ -171,7 +244,11 @@ class BinPackingEnv(gym.Env):
         boxes_norm = np.where(self.placed[:, None], 0.0, self.boxes / norm_dims)
         boxes_norm = np.clip(boxes_norm, 0.0, 1.0).astype(np.float32)
         heightmap_norm = np.clip(self.heightmap / self.cur_h, 0.0, 1.0).astype(np.float32)
-        return {"boxes": boxes_norm, "heightmap": heightmap_norm}
+        container = np.array(
+            [self.cur_gx / self.grid_size, self.cur_gy / self.grid_size, self.cur_h / self.max_height],
+            dtype=np.float32,
+        )
+        return {"boxes": boxes_norm, "heightmap": heightmap_norm, "container": container}
 
     def _landing_height(self, x: int, y: int, l: int, w: int) -> float:
         """How high a box of footprint (l, w) comes to rest at (x, y)."""
@@ -234,7 +311,21 @@ class BinPackingEnv(gym.Env):
             self.cur_h = self.max_height
             self.n_active = self.max_boxes
 
-        self.boxes = self._sample_boxes()
+        use_perfect = self.box_source == "perfect" or (
+            self.box_source == "mixed" and self.np_random.random() < 0.5
+        )
+        if use_perfect:
+            pieces = self._perfect_partition(min(self.n_active, self.max_boxes))
+            order = self.np_random.permutation(len(pieces))  # don't hand over the build order
+            pieces = [pieces[int(i)] for i in order]
+            self.n_active = len(pieces)
+            self.boxes = np.zeros((self.max_boxes, 3), dtype=np.float32)
+            self.boxes[: self.n_active] = np.array([p[3:] for p in pieces], dtype=np.float32)
+            self.solution = [(i,) + tuple(p) for i, p in enumerate(pieces)]
+        else:
+            self.boxes = self._sample_boxes()
+            self.solution = None
+
         # boxes beyond this episode's count are simply never available
         self.placed = np.zeros(self.max_boxes, dtype=bool)
         self.placed[self.n_active:] = True

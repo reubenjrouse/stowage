@@ -71,7 +71,11 @@ class PackingPolicy(MaskableActorCriticPolicy):
             nn.Conv2d(d, d, 1),
         )
 
-        self.value_net = nn.Sequential(nn.Linear(2 * d, d), nn.ReLU(), nn.Linear(d, 1))
+        # container scale -> a context vector added to BOTH the box and the
+        # position embeddings, so "how big is this container" can modulate
+        # what counts as a good box and a good spot
+        self.container_encoder = nn.Sequential(nn.Linear(3, d), nn.ReLU(), nn.Linear(d, d))
+        self.value_net = nn.Sequential(nn.Linear(3 * d, d), nn.ReLU(), nn.Linear(d, 1))
         self.action_dist = MaskableCategoricalDistribution(int(self.action_space.n))
 
         # index tensor for the 6 orientations, so we can build every
@@ -94,19 +98,22 @@ class PackingPolicy(MaskableActorCriticPolicy):
         oriented = boxes.unsqueeze(2).expand(B, self.n_boxes, self.n_rot, 3).gather(3, idx)
         tokens = oriented.reshape(B, self.n_boxes * self.n_rot, 3)
 
-        box_emb = self.box_encoder(tokens)
+        ctx = self.container_encoder(obs["container"].float())  # (B, d)
+
+        box_emb = self.box_encoder(tokens) + ctx.unsqueeze(1)
         attended, _ = self.box_attn(box_emb, box_emb, box_emb, need_weights=False)
         box_emb = self.box_norm(box_emb + attended)             # (B, N*R, d)
 
         pos_emb = self.pos_encoder(heightmap.unsqueeze(1))      # (B, d, G, G)
         pos_emb = pos_emb.flatten(2).transpose(1, 2)            # (B, G*G, d), index = x*G + y
+        pos_emb = pos_emb + ctx.unsqueeze(1)
 
         # score every (box-rotation, position) pair, then flatten in exactly
         # the order encode_action() uses
         logits = torch.bmm(box_emb, pos_emb.transpose(1, 2)) / math.sqrt(d)
         logits = logits.reshape(B, -1)
 
-        pooled = torch.cat([box_emb.mean(dim=1), pos_emb.mean(dim=1)], dim=1)
+        pooled = torch.cat([box_emb.mean(dim=1), pos_emb.mean(dim=1), ctx], dim=1)
         return logits, self.value_net(pooled)
 
     def _distribution(self, logits, action_masks):
