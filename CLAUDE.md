@@ -240,6 +240,29 @@ what the papers do too ("sample multiple solutions and select the best").
 solver.py returns the full placement sequence (box, rot, x, y, z, dims) in
 placement order, which is exactly what the app needs to animate the bot.
 
+DOES THE BOT FIND THE PERFECT SOLUTION? ALMOST NEVER -- and that is fine.
+Best-of-16 over 60 puzzles: average fill 90.4%, exact solves 0/60. Fill
+distribution: 80-90% x21, 90-95% x29, 95-100% x8, 100% x0. Exact 3D packing
+is NP-hard (~20 pieces is already 20! ~ 2.4e18 orderings before rotations
+and positions), so sampling 16 attempts explores almost nothing. Best-of-N
+raises the AVERAGE (84.9 -> 90.3) but barely moves exact solves (1 -> 2%).
+
+SOLVE RATE DEPENDS ON PIECE COUNT -- USE THIS FOR APP DIFFICULTY TIERS
+  pieces   avg fill   solved exactly (best-of-16)
+   6-10     90.2%      28%
+  11-16     89.8%       8%
+  17-24     91.7%       0%
+  25-30     92.1%       0%
+More pieces = higher average fill but essentially no perfect solves (one
+misplacement among 30 ruins it); fewer, larger pieces = lower average fill
+but genuinely solvable. So:
+  - FEW pieces (6-12)  -> "can you solve it perfectly?" The bot sometimes
+    does, and a human realistically can too.
+  - MANY pieces (20-30) -> "can you beat the bot's fill %?" Nobody solves
+    these, so score-based competition is the honest framing.
+Either way the app can always reveal env.solution, the guaranteed-perfect
+arrangement, after the attempt.
+
 EMS IS PROBABLY NOT NEEDED ANY MORE. Its trigger ("only if fill plateaus")
 did fire, but best-of-N already reached paper-level numbers for a fraction
 of the effort. Revisit only if single-pass quality becomes important.
