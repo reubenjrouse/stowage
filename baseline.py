@@ -1,14 +1,9 @@
 """
-The "obvious simple strategy" baseline the trained AI needs to beat.
+The simple strategy the agent has to beat.
 
-Greedy first-fit: go through the boxes (biggest volume first), and for each
-one, try every orientation at every legal position and take whichever keeps
-the stack lowest (a common, sensible, but not learned, packing rule). No AI
-involved -- this is the bar the agent has to clear.
-
-The baseline gets the same rotations the agent does (it reads
-env.n_rotations), so turning rotation off for an ablation keeps the
-comparison fair automatically.
+Take the biggest box first. For each box, try every orientation in every
+position and keep whichever one leaves the stack lowest. No learning involved.
+The agent gets the same rotations, so the comparison is fair.
 """
 
 from __future__ import annotations

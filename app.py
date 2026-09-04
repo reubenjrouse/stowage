@@ -1,14 +1,10 @@
-"""Backend for the packing app.
+"""
+Backend for the packing app.
 
-Two endpoints. /api/puzzle builds a puzzle to the player's chosen container
-and piece count -- instant, no model involved -- so Play mode starts without
-waiting. /api/solve runs the trained policy on that same puzzle, which is
-the slow part, so Watch and Compete fetch it separately and can show the
-puzzle while the bot thinks.
+  /api/puzzle   builds a puzzle at the size you asked for (fast, no model)
+  /api/solve    runs the trained policy on it (the slow part)
 
-Search method follows what we measured: beam search for small puzzles (it
-can abandon a bad early placement), sampling for large ones (scoring
-half-finished packings is myopic and the beam loses to plain sampling).
+They are separate calls so the app can show you the puzzle while the bot thinks.
 
     python app.py      then open http://127.0.0.1:8000
 """

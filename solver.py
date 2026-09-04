@@ -1,37 +1,17 @@
 """
-Inference-time solving: what the app actually calls.
+Playing a puzzle with a trained policy.
 
-A single greedy pass of the policy scores ~85% on 8-12 puzzles. Sampling
-several packings and keeping the best scores ~90% at 16 samples, for about
-1.5 seconds of compute -- a bigger gain than any amount of extra training
-bought, because the remaining loss is a GLOBAL ARRANGEMENT problem (which
-box where, in what order) rather than a local placement one. The reference
-papers do the same thing: sample multiple solutions, keep the best.
+Three ways to do it:
+  rollout      one pass, taking the best-looking move each time
+  best_of_n    play the whole puzzle several times over, keep the best result
+  beam_search  keep several part-finished packings going, drop the poor ones
 
-    greedy heuristic      83.6%
-    policy, single pass   84.9%
-    policy, best of 4     88.6%   0.39s
-    policy, best of 16    90.3%   1.48s
-    policy, best of 64    91.8%   6.00s
+Which is better depends on the size of the puzzle:
+  5-8 pieces     beam solves 60% of them, best-of-32 only 32%
+  17-30 pieces   best-of-16 fills 91.3%, beam only 87.7%
 
-WHICH SEARCH TO USE DEPENDS ON PUZZLE SIZE -- measured, and it flips:
-
-  EASY (3-8 pieces): beam_search wins decisively. It can back out of a bad
-  early placement, which best_of_n cannot -- restarts just repeat the same
-  mistake, which is why 200 restarts only moved solves 28% -> 35%.
-    3-4 pieces  beam(w=48)   solved 97%   fill 99.7%   0.24s
-    5-8 pieces  beam(w=96)   solved 67%   fill 94.7%   2.46s
-    5-8 pieces  best-of-32   solved 32%   fill 88.7%   0.72s
-
-  HARD (17-30 pieces): best_of_n wins; the beam is WORSE and slower.
-    best-of-16   fill 91.3%   1.53s
-    beam(w=32)   fill 87.7%   5.85s
-  The beam scores PARTIAL packings by volume-minus-dead-air so far, which is
-  myopic: with 25 pieces it commits to arrangements that look tidy early but
-  box in later pieces, and a width-32 beam covers almost nothing of that
-  space. best_of_n only ever judges FINISHED packings, so it avoids the trap.
-
-So: beam_search for small puzzles, best_of_n for large ones.
+Beam search wins when it can tell a good half-finished packing from a bad one.
+On big puzzles it can't, so plain sampling does better.
 """
 
 from __future__ import annotations
@@ -40,10 +20,10 @@ import numpy as np
 
 
 def rollout(model, env, seed: int, deterministic: bool):
-    """One packing attempt. Returns (fill, placements).
+    """One attempt at a puzzle. Returns how full it got, and the moves.
 
-    placements are (box, rot, x, y, z, l, w, h) in the order they were
-    placed -- everything the app needs to animate the bot packing.
+    Each move is (box, rotation, x, y, z, length, width, height) in the order
+    it was played, which is what the app needs to animate the bot.
     """
     obs, _ = env.reset(seed=seed)
     placements, done = [], False
@@ -59,10 +39,10 @@ def rollout(model, env, seed: int, deterministic: bool):
 
 
 def solve(model, env, seed: int, n_samples: int = 16):
-    """Best of n_samples stochastic packings, plus one greedy pass.
+    """Play the puzzle n_samples times and keep the best result.
 
-    The greedy pass is included because it is occasionally better than every
-    sample, and it costs one extra rollout.
+    The straight greedy pass is thrown in too, since it sometimes beats all
+    the random ones and only costs one extra attempt.
     """
     best_fill, best_placements = rollout(model, env, seed, deterministic=True)
     for _ in range(n_samples):
@@ -99,17 +79,15 @@ if __name__ == "__main__":
 
 
 def beam_search(model, env, seed: int, beam_width: int = 16, top_k: int = 6):
-    """Policy-guided beam search -- the bot WITH backtracking.
+    """Beam search: the bot, but able to change its mind.
 
-    best_of_n replays the whole puzzle from scratch each time, so its
-    attempts are all variations on the same idea (200 restarts moved the
-    solve rate on small puzzles only 28% -> 35%). A beam keeps several
-    DIFFERENT partial packings alive at once and extends the most promising
-    ones, so a bad early placement gets abandoned instead of poisoning every
-    later attempt.
+    best_of_n starts from scratch every time, so all its attempts end up
+    being variations on the same idea -- 200 restarts only moved the solve
+    rate from 28% to 35%. A beam keeps several different part-finished
+    packings going at once and extends the promising ones, so a bad early
+    move gets dropped instead of ruining every later attempt.
 
-    Scores partial packings by cumulative reward, which is exactly
-    "volume placed minus dead air created" -- the thing we want to maximise.
+    Packings are ranked by space gained so far, minus dead air created.
     """
     import copy
 

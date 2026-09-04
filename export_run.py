@@ -1,9 +1,6 @@
-"""Run the bot on a few puzzles and export the packing sequences as JSON.
-
-The viewer needs, per puzzle: the container size, every placement in the
-order the bot made it (with the height the box fell to), and the perfect
-solution the puzzle was generated from, so the app can show what a 100%
-answer looked like.
+"""
+Runs the bot on a few puzzles and writes the results to packing_runs.json,
+which viewer.html replays as a standalone page with no server needed.
 """
 
 from __future__ import annotations

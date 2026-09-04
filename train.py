@@ -1,22 +1,11 @@
 """
-Stage 2: hook up the learner.
+Trains the packing policy with MaskablePPO.
 
-Trains a maskable PPO agent (via sb3-contrib -- a proven, off-the-shelf
-algorithm, not hand-rolled) on the BinPackingEnv, then compares it against
-the greedy baseline at the end.
+    python train.py --randomize --box-source perfect --grid-min 8 --grid-size 12
 
-Why MaskablePPO rather than plain PPO: the action space is
-(box x rotation x position), 18,000 entries at the default settings, and at
-any given step the overwhelming majority are illegal. The env hands the
-policy an exact feasibility mask so it only ever samples legal placements
-and spends its samples on packing well instead of on rediscovering the
-rules. This is what the reference papers do (PQNet multiplies its action
-values by a feasibility mask; GOPT the same).
-
-Usage:
-    python train.py                        # default: 1M timesteps, 30 boxes, rotation on
-    python train.py --timesteps 2000000    # train longer
-    python train.py --n-rotations 1        # ablation: rotation off, to isolate its effect
+Checkpoints are written to checkpoints/ every 25k steps, and the model is saved
+even if you stop it with Ctrl+C. At the end it plays the trained agent and the
+greedy baseline on the same puzzles and reports the difference.
 """
 
 from __future__ import annotations
@@ -154,11 +143,9 @@ def main(
                       n_rotations=n_rotations, randomize=randomize, box_source=box_source,
                       grid_range=grid_range, height_range=grid_range, boxes_range=boxes_range)
 
-    # Profiling says ~95% of the per-step cost is env work (stepping plus
-    # building the feasibility mask), which is pure Python/numpy and can't be
-    # moved to the GPU. DummyVecEnv would run all n_envs of it sequentially in
-    # this process, so spread it across cores instead -- this is the single
-    # biggest wall-clock win available, bigger than the GPU.
+    # Roughly 95% of the time per step goes on the environment, not the
+    # network, and that part cannot use the GPU. Running the environments in
+    # separate processes is a bigger speed-up than the GPU is.
     vec_cls = SubprocVecEnv if n_envs > 1 else DummyVecEnv
     vec_env = make_vec_env(lambda: BinPackingEnv(**env_kwargs), n_envs=n_envs, vec_env_cls=vec_cls)
 
@@ -185,10 +172,8 @@ def main(
     print(f"Training for {total_timesteps:,} timesteps...")
     print(f"Watch progress live with: tensorboard --logdir {log_dir}\n")
 
-    # Checkpoint often. A 540k-step run that had already passed the greedy
-    # baseline was lost outright when the laptop powered off mid-run, because
-    # the only save happened after learn() returned. save_freq counts steps
-    # PER ENV, so divide by n_envs to get an interval in total timesteps.
+    # Save often, so losing power costs 25k steps rather than the whole run.
+    # save_freq counts steps per environment, hence the division.
     callback = CallbackList([
         FillFractionCallback(grid_cap=grid_size),
         CheckpointCallback(
@@ -239,10 +224,9 @@ if __name__ == "__main__":
     parser.add_argument("--max-boxes", type=int, default=30)
     parser.add_argument("--log-dir", type=str, default="./tb_logs")
     parser.add_argument("--n-envs", type=int, default=8, help="parallel environments (subprocesses) for faster data collection")
-    # 0.01 is the usual default, but it assumes a handful of actions. With
-    # ~9,800 legal moves per step the bonus is 0.01*ln(9800) ~= 0.09 against
-    # episode returns of ~0.6 -- i.e. ~15% of the agent's income was paid for
-    # staying undecided, which is part of why entropy never fell.
+    # The usual 0.01 assumes a handful of actions. With ~9,800 legal moves the
+    # bonus works out at about 15% of what an episode is worth, which pays the
+    # agent to stay undecided. Scale it down as the action space grows.
     parser.add_argument("--ent-coef", type=float, default=0.001, help="entropy bonus; scale it down as the action space grows")
     parser.add_argument("--n-epochs", type=int, default=5, help="PPO epochs per rollout; lower reduces over-clipping")
     parser.add_argument("--embed-dim", type=int, default=128, help="embedding width for the box and position encoders")
@@ -255,11 +239,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint-freq", type=int, default=25_000, help="save a checkpoint every N timesteps")
     parser.add_argument("--resume", type=str, default=None, help="path to a checkpoint .zip to continue from")
     parser.add_argument("--n-rotations", type=int, default=6, help="6 = full rotation, 1 = rotation off (ablation)")
-    # Off by default. At 0.03 this fired on every single rollout ("Early
-    # stopping at step 1"), cutting ~1280 gradient steps down to 2 and pinning
-    # the policy at its random init -- 230k steps of training that scored
-    # exactly the 52% random-legal floor. clip_range already bounds the update;
-    # this second brake is what strangled it.
+    # Off by default. At 0.03 it cut every update short and the policy barely
+    # moved. clip_range already limits how far an update can go.
     parser.add_argument("--target-kl", type=float, default=None, help="optional extra brake on update size; off by default")
     args = parser.parse_args()
     main(

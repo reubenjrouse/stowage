@@ -1,8 +1,9 @@
-"""Rough syntax sanity check for the app's inline JavaScript.
+"""
+A rough syntax check for the JavaScript inside app.html.
 
-Not a parser -- it strips strings/comments with a small state machine, then
-balances delimiters. Catches the gross errors (an unclosed brace, a stray
-paren) that would otherwise only show up as a blank page in the browser.
+It strips out strings and comments, then checks the brackets balance and that
+the functions and element ids the code refers to actually exist. It cannot
+catch runtime errors -- only a browser can do that.
 """
 
 import io

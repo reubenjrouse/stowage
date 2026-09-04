@@ -1,32 +1,13 @@
 """
-The packing policy network.
+The network that decides where each box should go.
 
-WHY THIS EXISTS
-An MLP ending in a single Linear(128 -> 18000) has to learn 18,000
-independent "how good is this move?" numbers with nothing shared between
-them: "box 3 at (4,5)" and "box 3 at (4,6)" are unrelated parameters, so
-learning about one teaches it nothing about the other. Empirically that
-network never developed an opinion at all -- its policy entropy sat at
-ln(n_legal) for 250k steps and it scored the random-policy fill.
+It has to score every possible move. Rather than learn 18,000 unrelated scores,
+it learns how to describe a box and how to describe a spot, then scores a pair
+by how well the two descriptions match. That way, what it learns about one spot
+carries over to similar ones, which is what makes this trainable at all.
 
-The reference papers all avoid this the same way. PQNet encodes items and
-spaces separately and takes their DOT PRODUCT to score every (item, space)
-pair ("the dot product between vectors in h_ru and h_s is calculated to
-obtain a matrix M"; GOPT and Attend2Pack do the equivalent). The action
-space factorises, so the network should too.
-
-HOW IT MAPS TO OUR ACTION SPACE
-Our action index is ((box * n_rot + rot) * grid + x) * grid + y, i.e. it
-already factorises as (box-rotation) x (position):
-  - box tokens:      n_boxes * n_rotations, embedded from their (l, w, h)
-  - position tokens: grid * grid, embedded from the local heightmap by a
-                     CNN (so nearby cells share what they learn)
-  - logits:          box_embeddings @ position_embeddings.T, flattened
-
-Parameters drop from ~2.3M unrelated output weights to ~60k shared ones,
-and the box encoder is set-based (attention), so it takes a variable
-number of boxes -- which is the prerequisite for the domain randomisation
-in Stage 3.
+The boxes go through an attention layer so the network sees them as a set, and
+the surface of the pile goes through a small CNN.
 """
 
 from __future__ import annotations
@@ -78,8 +59,8 @@ class PackingPolicy(MaskableActorCriticPolicy):
         self.value_net = nn.Sequential(nn.Linear(3 * d, d), nn.ReLU(), nn.Linear(d, 1))
         self.action_dist = MaskableCategoricalDistribution(int(self.action_space.n))
 
-        # index tensor for the 6 orientations, so we can build every
-        # (box, rotation) token without a python loop
+        # the 6 orientations as an index, so every (box, rotation) pair can be
+        # built in one go rather than in a loop
         perms = torch.tensor(ROTATIONS[: self.n_rot], dtype=torch.long)
         self.register_buffer("perms", perms)
 

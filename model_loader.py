@@ -1,15 +1,13 @@
-"""Find the trained policy.
+"""
+Loads the trained policy.
 
-Everything that runs the agent -- the app, the solver demo, the exporters --
-needs the same model, and picking it by "highest step number in checkpoints/"
-was a trap: several training runs share that directory and their filenames
-collide by step count, so a bigger number can belong to an older run with a
-different network shape. Matching the observation space is what makes the
-choice correct.
+It picks the model by matching the observation space, not by the highest step
+number in the filename. Several training runs write to checkpoints/ and reuse
+the same names, so the biggest number can belong to an old run with a network
+of a different shape.
 
-model/packing_policy.zip is the shipped model, so a fresh clone works with no
-training and no 889MB of checkpoints. If it is missing (say you have just
-trained something new) this falls back to scanning checkpoints/, newest first.
+model/packing_policy.zip is the model that ships with the repo, so a fresh
+clone can run the app without training anything.
 """
 
 from __future__ import annotations

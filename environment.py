@@ -1,30 +1,15 @@
 """
-Stage 2: the real packing problem.
+The packing game: a container, a set of boxes, and the rules for putting them in.
 
-A simplified offline 3D bin-packing environment, built on Gymnasium
-(the standard interface RL libraries expect: reset(), step(), observation
-space, action space).
+A box falls straight down and lands on whatever is underneath, like Tetris. One
+move is three choices at once: which box, which way up, and where on the floor.
+action_masks() lists the moves that are actually legal, which is what keeps the
+18,000-odd possible moves manageable.
 
-What changed from the Stage 1 version, and why:
-- MORE BOXES THAN FIT. The old version handed the agent 8 boxes totalling
-  ~35% of the container, so every box fit no matter where it went and the
-  greedy baseline placed 8/8 every episode -- its 34.8% "score" was the
-  arithmetic ceiling, not a bar to clear. With the box set now exceeding
-  the container, the agent has to choose WHICH boxes to place and WHERE,
-  and fill % finally measures packing skill.
-- ROTATION. Each box can be placed in any of its 6 axis-aligned
-  orientations (set n_rotations=1 to turn this off and isolate its effect).
-- ACTION MASKING. The action is a single flat index over
-  (box, rotation, x, y), and action_masks() marks exactly those actions
-  that lead to a legal placement. This is what the reference papers do
-  (PQNet multiplies its action values by a "feasibility mask"; GOPT the
-  same) -- without it, almost every action in an 12000-way space is
-  illegal and the agent burns its samples learning what "legal" means.
-- HONEST TERMINATION. The episode ends when nothing more can be placed,
-  not when the step budget runs out.
+Puzzles come in two flavours: random box sizes, or pieces cut out of the
+container so that a perfect 100% fit is guaranteed to exist.
 
-Height (z) is still computed automatically -- a box drops until it lands
-on the floor or on top of whatever's already there, like Tetris.
+Run this file directly to check the legal-move rules are right.
 """
 
 from __future__ import annotations
@@ -76,28 +61,18 @@ class BinPackingEnv(gym.Env):
         self.rotations = ROTATIONS[:n_rotations]
         self.max_steps = max_boxes * max_steps_multiplier
 
-        # "compact" scores a placement by the NET space it gains: the box's
-        # volume minus the dead space it seals underneath itself. "volume"
-        # is the old behaviour (volume only) and is kept for ablation.
-        #
-        # This matters more than it looks. Under "volume", every legal
-        # position for a given box scored EXACTLY the same -- dropping a box
-        # flush onto a flat surface and dropping it onto a jagged spot that
-        # sealed 90 units of dead air were worth identical reward, so the
-        # agent got no signal at all about where to place things and sat at
-        # the random-policy score forever. This mirrors the reward in the
-        # PQNet paper (r_t = g_{t-1} - g_t over wasted space) adapted to a
-        # fixed-size container.
+        # "compact" scores a placement by the space it actually gains: the
+        # box's volume minus the dead air it traps underneath. "volume" just
+        # counts the box, which gives every position for a given box the same
+        # score, so the agent learns nothing about where to put things.
         if reward_mode not in ("compact", "volume"):
             raise ValueError("reward_mode must be 'compact' or 'volume'")
         self.reward_mode = reward_mode
 
-        # DOMAIN RANDOMISATION. grid_size / max_height / max_boxes are now the
-        # CAPS that fix the array shapes SB3 requires; the ACTUAL container
-        # (cur_gx, cur_gy, cur_h) and box count are resampled every episode.
-        # Cells outside the current container are pre-filled to cur_h, i.e.
-        # "already full", so the ordinary feasibility test excludes them and
-        # nothing else in the env has to know the container shrank.
+        # grid_size, max_height and max_boxes are the maximums, which fix the
+        # array sizes. The real container and box count change every episode.
+        # Cells outside the current container start "full", so the normal
+        # can-it-fit check refuses to put anything there.
         self.randomize = randomize
         self.grid_range = grid_range
         self.height_range = height_range
@@ -107,65 +82,50 @@ class BinPackingEnv(gym.Env):
         self.cur_h = max_height
         self.n_active = max_boxes
 
-        # Box dims must SCALE WITH THE CONTAINER or the benchmark saturates:
-        # 30 boxes of 2-5 units total ~1305, which is 130% of a 10x10x10
-        # container (a real packing problem) but only 48% of a 14x14x14 one
-        # (everything fits anywhere -- exactly the dead benchmark that wasted
-        # the first days of this project). Sampling each dim in
-        # [0.2*side, 0.5*side], as the papers do, keeps the ratio near 130%
-        # at every container size -- and reproduces the validated 2-5 range
-        # exactly when the side is 10.
+        # Box sizes scale with the container. Fixed 2-5 sizes fill 130% of a
+        # 10x10x10 box but only 48% of a 14x14x14 one, and when everything
+        # fits anywhere there is nothing to learn. Each side is drawn from
+        # [0.2, 0.5] of the container, which keeps the ratio near 130%.
         self.scale_boxes = scale_boxes
 
-        # BOX SOURCE
-        #  "random"  - independent random dims (what Stage 2/3 trained on)
-        #  "perfect" - REVERSE CONSTRUCTION: recursively cut the container into
-        #              pieces, so the boxes tile it EXACTLY and a 100% packing
-        #              is guaranteed to exist. This is the app's puzzle mode.
-        #  "mixed"   - half and half, so one agent handles both.
-        # A perfect partition IS reachable under drop-from-above: place the
-        # pieces in bottom-up order and each lands on a floor its neighbours
-        # have already filled exactly to its underside.
+        # Where the boxes come from:
+        #   "random"  - independent random sizes
+        #   "perfect" - cut the container into pieces, so they tile it exactly
+        #               and a 100% packing is guaranteed to exist
+        #   "mixed"   - half of each
+        # A perfect packing can always be built by dropping: go bottom-up and
+        # each piece lands on a floor its neighbours have already filled in.
         if box_source not in ("random", "perfect", "mixed"):
             raise ValueError("box_source must be 'random', 'perfect' or 'mixed'")
         self.box_source = box_source
         self.min_piece = min_piece
-        # 0.0 = always split the largest piece, which EQUALISES sizes (the
-        # original behaviour, and what the current model trained on -- it
-        # produces puzzles full of near-identical boxes). Higher values split
-        # a random piece that often, giving a genuine mix of big and small.
+        # 0.0 always splits the biggest piece, which makes every piece end up
+        # a similar size. Higher values split a random piece instead, giving a
+        # real mix of large and small.
         self.split_variety = float(split_variety)
-        # The app lets a player choose exact container dimensions. Randomised
-        # sampling draws each axis independently, so it cannot express "10x8x11";
-        # this pins all three.
+        # Pins the container to an exact size. Random sampling picks each side
+        # separately, so it can't be asked for a specific 10x8x11.
         self.fixed_container = fixed_container
         self.solution = None
 
-        # What the agent gets to see each step:
-        #  - "boxes": (l, w, h) for each of the max_boxes boxes, normalized to
-        #     [0, 1] by the container's dimensions. A box that's already been
-        #     placed shows up as all zeros (so the agent learns not to pick it
-        #     again).
-        #  - "heightmap": how tall the stack is at each (x, y) floor cell,
-        #     normalized by max_height. This is how the agent "sees" what's
-        #     already packed.
+        # What the agent sees each step:
+        #   boxes      - the size of each box; a placed box reads as zeros
+        #   heightmap  - how tall the pile is at each spot on the floor
+        #   container  - the size of this container
         self.observation_space = spaces.Dict(
             {
                 "boxes": spaces.Box(low=0.0, high=1.0, shape=(max_boxes, 3), dtype=np.float32),
                 "heightmap": spaces.Box(low=0.0, high=1.0, shape=(grid_size, grid_size), dtype=np.float32),
-                # Everything else is normalised by the current container, which
-                # is what makes the policy scale-invariant -- but it also hides
-                # the ABSOLUTE size, and a 5-tall container behaves differently
-                # from a 14-tall one because the grid is discrete. Three scalars
-                # give that back.
+                # Everything else is measured relative to the container, which
+                # hides how big it actually is -- and a 5-tall container plays
+                # differently from a 14-tall one. These three put that back.
                 "container": spaces.Box(low=0.0, high=1.0, shape=(3,), dtype=np.float32),
             }
         )
 
-        # One flat index over (box, rotation, x, y). It has to be flat rather
-        # than MultiDiscrete: SB3 masks each MultiDiscrete dimension
-        # independently, which can't express "box 3 rotated this way fits at
-        # (4,5) but not (4,6)". A flat Discrete takes an exact joint mask.
+        # A move is one number covering (box, rotation, x, y). It has to be a
+        # single number: SB3 can only mask each part separately, which cannot
+        # say "this box fits at (4,5) but not (4,6)".
         self.n_positions = grid_size * grid_size
         self.action_space = spaces.Discrete(max_boxes * n_rotations * self.n_positions)
 
@@ -250,10 +210,9 @@ class BinPackingEnv(gym.Env):
         return pieces
 
     def _get_obs(self) -> dict:
-        # Normalising by the CURRENT container makes the observation
-        # scale-invariant: 1.0 always means "as big as the container" and a
-        # heightmap of 1.0 always means "no room left here", whatever size
-        # this episode's container happens to be.
+        # Everything is measured against the current container, so 1.0 always
+        # means "as big as the container" and a height of 1.0 always means
+        # "no room left here", whatever size this container is.
         norm_dims = np.array([self.cur_gx, self.cur_gy, self.cur_h], dtype=np.float32)
         boxes_norm = np.where(self.placed[:, None], 0.0, self.boxes / norm_dims)
         boxes_norm = np.clip(boxes_norm, 0.0, 1.0).astype(np.float32)
