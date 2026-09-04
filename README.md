@@ -1,4 +1,4 @@
-# Packing Puzzle
+# Stowage: a packing puzzle
 
 A reinforcement learning agent that packs 3D boxes into a container, and a browser game where you can watch it, play the same puzzle yourself, or race it.
 
