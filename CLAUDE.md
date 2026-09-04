@@ -263,6 +263,28 @@ but genuinely solvable. So:
 Either way the app can always reveal env.solution, the guaranteed-perfect
 arrangement, after the attempt.
 
+BACKTRACKING: DO IT AT PLAY TIME, NOT IN TRAINING (decided)
+Adding an "undo" action to the env was considered and rejected: the
+heightmap overwrites the heights underneath a landed box, so undo would
+need full 3D state history; the reward becomes ill-defined (what does an
+undo earn? how do you prevent undo loops?); and credit assignment gets
+harder. Instead solver.py::beam_search keeps several DIFFERENT partial
+packings alive and abandons bad branches -- backtracking without touching
+training or the model.
+  5-8 pieces:  best-of-32 solved 32% (0.72s)  vs  beam(w=24) solved 60% (0.78s)
+  3-4 pieces:  beam(w=48) solved 97%, fill 99.7%, 0.24s
+BUT ON BIG PUZZLES THE BEAM LOSES: 17-30 pieces, best-of-16 fills 91.3%
+while beam(w=32) manages only 87.7% and takes 4x longer. The beam scores
+PARTIAL packings (volume minus dead air so far), which is myopic -- it
+commits to tidy-looking early layouts that box in later pieces, and a
+width-32 beam covers almost none of that space. best_of_n judges only
+FINISHED packings, so it avoids that trap.
+APP RULE: beam_search for easy puzzles, best_of_n for hard ones.
+UNTRIED IDEA: score beam states with the critic (value net) instead of
+accumulated reward -- explained_variance is 0.96, so the critic is accurate,
+and that would remove the myopia. Worth one experiment if hard-mode quality
+matters.
+
 EMS IS PROBABLY NOT NEEDED ANY MORE. Its trigger ("only if fill plateaus")
 did fire, but best-of-N already reached paper-level numbers for a fraction
 of the effort. Revisit only if single-pass quality becomes important.
