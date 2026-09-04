@@ -79,24 +79,14 @@ if __name__ == "__main__":
     from sb3_contrib import MaskablePPO
 
     from environment import BinPackingEnv
+    from model_loader import load_policy
 
     # pick the newest checkpoint matching the current env, not the highest
     # step number -- different runs share the checkpoints/ directory and
     # their filenames collide by step count.
     env = BinPackingEnv(grid_size=12, max_height=12, max_boxes=30, n_rotations=6, randomize=True,
                         grid_range=(8, 12), height_range=(8, 12), boxes_range=(8, 30), box_source="perfect")
-    best = None
-    for f in glob.glob("checkpoints/*.zip"):
-        try:
-            m = MaskablePPO.load(f, device="cpu")
-            if m.observation_space == env.observation_space:
-                step = int(re.search(r"(\d+)_steps", f).group(1))
-                if best is None or step > best[0]:
-                    best = (step, f, m)
-        except Exception:
-            pass
-    step, path, model = best
-    print(f"model: {path} ({step:,} steps)\n")
+    model = load_policy(env)
 
     for seed in range(3):
         fill, placements = solve(model, env, seed, n_samples=16)

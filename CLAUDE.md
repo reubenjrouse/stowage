@@ -123,22 +123,48 @@ PROBLEM FORMULATION (decided and implemented — don't relitigate)
 =====================================================================
 WHAT'S IN THE REPO
 =====================================================================
-environment.py  The game: container, boxes, rules, rewards. Gymnasium
-                API (reset/step). Also action_masks() (legal moves) and
-                self-tests under `if __name__ == "__main__"`.
-baseline.py     The non-AI opponent: greedy first-fit, biggest box
-                first, placed wherever it rests lowest. The bar to beat.
-policy.py       The policy network: box embeddings (attention) x position
-                embeddings (CNN over the heightmap), scored by dot product.
-                This is what made the agent able to learn at all.
-train.py        The trainer: MaskablePPO, checkpointing (--resume), and
-                agent-vs-baseline evaluation with a significance check.
-                --randomize turns on Stage 3 domain randomisation.
-checkpoints/    Auto-saved every 25k steps (a power cut used to cost a
-                whole run; now it costs 25k steps).
-requirements.txt Dependencies.
-reference_code_papers.txt  Source papers (see below).
-tb_logs/        TensorBoard output.   ppo_bin_packing_stage2.zip  Saved model.
+
+THE RL CORE
+environment.py   The game. Container, pieces, rules, reward, Gymnasium API
+                 (reset/step). Also action_masks() (which moves are legal),
+                 the reverse-construction puzzle generator, and self-tests
+                 under `python environment.py`.
+policy.py        The policy network. Box embeddings (attention) x position
+                 embeddings (CNN over the heightmap), scored by dot product.
+                 This is what made the agent able to learn at all.
+train.py         Training: MaskablePPO, checkpointing, --resume, and a paired
+                 agent-vs-greedy evaluation at the end.
+baseline.py      The greedy first-fit heuristic the agent has to beat.
+solver.py        Inference. rollout(), best-of-N, and beam_search(); run it
+                 directly for a quick demo. Beam for small puzzles, sampling
+                 for large -- see the numbers in its docstring.
+model_loader.py  Finds the trained policy. ALWAYS matches on observation
+                 space, never on "highest step number": training runs share
+                 checkpoints/ and their filenames collide by step count, so a
+                 bigger number can be an older run with a different network.
+
+THE APP
+app.py           FastAPI backend. /api/puzzle builds a puzzle to the player's
+                 chosen size (instant, no model); /api/solve runs the policy.
+                 `python app.py`, then open http://127.0.0.1:8000
+app.html         The whole front end: three.js scene, Watch / Play / Compete,
+                 3D staging area, split-screen compete, settings, results.
+check_js.py      Rough syntax check for app.html's inline JS (balanced
+                 delimiters, functions defined, element ids exist). It cannot
+                 catch runtime errors -- only a browser can.
+
+STANDALONE DEMO (no server needed)
+export_run.py    Runs the bot on a few puzzles and writes packing_runs.json.
+viewer.html      Replays those runs as a self-contained page; this is what
+                 gets published as a shareable artifact.
+packing_runs.json  The exported runs viewer.html embeds.
+
+DATA AND WEIGHTS
+model/packing_policy.zip  The shipped trained policy (3.4M steps). Committed,
+                 so a fresh clone runs the app with no training.
+checkpoints/     Training checkpoint stream, ~900MB. GITIGNORED.
+tb_logs/         TensorBoard output. GITIGNORED.
+reference_code_papers.txt  Source papers.
 
 =====================================================================
 KEY REFERENCE PAPERS / SOURCES (in priority order)
@@ -169,163 +195,33 @@ REJECTED APPROACHES (don't suggest these again)
 =====================================================================
 NEXT STEPS, IN ORDER
 =====================================================================
-NOW: the Stage 2 + Stage 3 run, in one go:
-     powercfg /change standby-timeout-ac 0      (plug in first!)
-     python train.py --timesteps 1000000 --randomize
+THE APP IS BUILT AND RUNNING (python app.py -> http://127.0.0.1:8000)
+Three modes, all real-time against the live model:
+  Watch   the bot packs puzzle after puzzle, endlessly
+  Play    pick a box off the ground, R turns it, click to drop, undo freely
+  Compete split screen, same pieces; FIRST TO 100% WINS. Because the pieces
+          are cut from the container, placing them all IS a perfect pack, so
+          finishing and winning are the same event. Short of that the tighter
+          pack wins, exact ties go on time. The bot is deliberately slowed to
+          one box every 2.8s so a human can keep up, and says so on screen.
 
-     It evaluates twice at the end: on the FIXED canonical setting
-     (comparable with every earlier run, greedy = 85.2%) and on
-     randomised containers (greedy = 84.7%). Checkpoints every 25k in
-     checkpoints/; continue a killed run with --resume <path>.
+OPEN QUESTION -- COMPETE FAIRNESS (raised, not yet done)
+The bot plays its BEST OF 16 attempts (or a beam search) worked out before
+the race starts, while the player gets one attempt with undo. Slowing the
+bot fixes the pace but not that asymmetry. The fix is to give compete a
+single deterministic pass: 84.9% instead of 90.3%, one honest attempt like
+the player's, with undo as the player's compensating edge. Decide before
+calling the app finished.
 
-EVAL FLOORS (deterministic argmax, 200 episodes, fixed setting)
-- Untrained network:  48.2%   <- the real floor for the eval protocol
-- Uniform random:     52.1%
-- Greedy baseline:    85.2%   <- the bar
-- 8k steps of the dot-product policy already gives 79.0%, i.e. it is
-  roughly 10x more sample-efficient than the old MLP (which needed
-  ~400k steps to reach the same place).
-
-STAGE 3 DONE. NOW BUILDING FOR THE APP (puzzle mode)
-=====================================================================
-TRAINING TARGET (decided Sep 2, after the 2.9M mixed run)
-box_source="perfect" ONLY, containers 8-12 per side, grid cap 12
-(25,920 actions). In puzzle mode "pack efficiently" and "solve the puzzle"
-are the SAME objective, because the pieces tile the container exactly:
-fill 100% <=> every box placed <=> solved. Verified: the perfect solution
-earns 1.200, the maximum possible reward (greedy 0.904, random 0.359).
-The reward is NOT the problem -- don't redesign it.
-
-WHY NARROWER: breadth was costing more than it bought.
-  6-10 cubic-ish, one box source, 18k actions -> beat greedy +2.95pp
-  5-14 any aspect, mixed sources, 35k actions -> PARITY (+0.55pp, t=0.8)
-~1000 container shapes at 2.9M steps is only ~180 episodes per shape. The
-2.9M mixed model beat greedy on exactly-cubic containers (+2.7 to +5.0pp)
-but fell to greedy level as soon as dimensions varied, and LOST on small
-containers (5-7: -5.1pp, both near-cubic and elongated). 8-12 is 125
-shapes, ~8x more practice each, and perfect-only doubles the samples that
-count. Headroom at 8-12: greedy 83.6% vs a true 100% ceiling.
-
-METRICS WERE MISLEADING -- FIXED. A single avg_fill_fraction is nearly
-useless under randomisation: the agent scores ~100% on 5x5x5 and ~84% on
-14x14x14, so a 50-episode running mean mostly tracks WHICH CONTAINERS WERE
-DRAWN, not policy quality. That is why the curve looked noisy and flat.
-Now logged: fill_small / fill_mid / fill_large (thresholds relative to the
-grid cap, so each is comparable with itself) plus solve_rate, the fraction
-of puzzles solved to exactly 100% -- the number that actually matters when
-the optimum is known. Solve rate on the 2.9M model: 13% small, 2% mid, 0%
-large.
-
-RESULTS AT 2.6M STEPS (8-12, perfect puzzles, paired on identical seeds)
-  greedy 83.4%   agent 85.5%   +2.06pp (t=3.2)   agent wins 62%
-Loss decomposition -- this is the important part:
-  agent : filled 85.5%  trapped void 2.6%  unplaced boxes 14.5%
-  greedy: filled 83.4%  trapped void 6.7%  unplaced boxes 16.6%
-The agent has ESSENTIALLY SOLVED tight packing (less than half greedy's
-dead air). All remaining loss is boxes it never fits, i.e. a GLOBAL
-ARRANGEMENT problem (which box, in what order), not placement quality.
-Training plateaued at ~1.6M: entropy flat at -1.23, fill flat, expl_var
-0.96. More steps will not fix an arrangement problem.
-
-BEST-OF-N SAMPLING IS THE BIG WIN (solver.py) -- no retraining needed
-  greedy heuristic      83.6%
-  policy, single pass   84.9%
-  policy, best of 4     88.6%   0.39s per puzzle
-  policy, best of 16    90.3%   1.48s per puzzle   <- use this in the app
-  policy, best of 64    91.8%   6.00s per puzzle
-Sampling several packings and keeping the best beats greedy by 6.7pp and
-lands in the range the reference papers report (89-93%). The app has no
-real-time constraint, so the bot can afford to think for a second. This is
-what the papers do too ("sample multiple solutions and select the best").
-solver.py returns the full placement sequence (box, rot, x, y, z, dims) in
-placement order, which is exactly what the app needs to animate the bot.
-
-DOES THE BOT FIND THE PERFECT SOLUTION? ALMOST NEVER -- and that is fine.
-Best-of-16 over 60 puzzles: average fill 90.4%, exact solves 0/60. Fill
-distribution: 80-90% x21, 90-95% x29, 95-100% x8, 100% x0. Exact 3D packing
-is NP-hard (~20 pieces is already 20! ~ 2.4e18 orderings before rotations
-and positions), so sampling 16 attempts explores almost nothing. Best-of-N
-raises the AVERAGE (84.9 -> 90.3) but barely moves exact solves (1 -> 2%).
-
-SOLVE RATE DEPENDS ON PIECE COUNT -- USE THIS FOR APP DIFFICULTY TIERS
-  pieces   avg fill   solved exactly (best-of-16)
-   6-10     90.2%      28%
-  11-16     89.8%       8%
-  17-24     91.7%       0%
-  25-30     92.1%       0%
-More pieces = higher average fill but essentially no perfect solves (one
-misplacement among 30 ruins it); fewer, larger pieces = lower average fill
-but genuinely solvable. So:
-  - FEW pieces (6-12)  -> "can you solve it perfectly?" The bot sometimes
-    does, and a human realistically can too.
-  - MANY pieces (20-30) -> "can you beat the bot's fill %?" Nobody solves
-    these, so score-based competition is the honest framing.
-Either way the app can always reveal env.solution, the guaranteed-perfect
-arrangement, after the attempt.
-
-BACKTRACKING: DO IT AT PLAY TIME, NOT IN TRAINING (decided)
-Adding an "undo" action to the env was considered and rejected: the
-heightmap overwrites the heights underneath a landed box, so undo would
-need full 3D state history; the reward becomes ill-defined (what does an
-undo earn? how do you prevent undo loops?); and credit assignment gets
-harder. Instead solver.py::beam_search keeps several DIFFERENT partial
-packings alive and abandons bad branches -- backtracking without touching
-training or the model.
-  5-8 pieces:  best-of-32 solved 32% (0.72s)  vs  beam(w=24) solved 60% (0.78s)
-  3-4 pieces:  beam(w=48) solved 97%, fill 99.7%, 0.24s
-BUT ON BIG PUZZLES THE BEAM LOSES: 17-30 pieces, best-of-16 fills 91.3%
-while beam(w=32) manages only 87.7% and takes 4x longer. The beam scores
-PARTIAL packings (volume minus dead air so far), which is myopic -- it
-commits to tidy-looking early layouts that box in later pieces, and a
-width-32 beam covers almost none of that space. best_of_n judges only
-FINISHED packings, so it avoids that trap.
-APP RULE: beam_search for easy puzzles, best_of_n for hard ones.
-UNTRIED IDEA: score beam states with the critic (value net) instead of
-accumulated reward -- explained_variance is 0.96, so the critic is accurate,
-and that would remove the myopia. Worth one experiment if hard-mode quality
-matters.
-
-EMS IS PROBABLY NOT NEEDED ANY MORE. Its trigger ("only if fill plateaus")
-did fire, but best-of-N already reached paper-level numbers for a fraction
-of the effort. Revisit only if single-pass quality becomes important.
-
-CHECKPOINT COLLISION -- WATCH OUT. Every run writes to checkpoints/ with
-filenames keyed by step number, so a new run silently overwrites an older
-one's files and any surviving higher-numbered files belong to the OLD run
-and the OLD architecture. Select checkpoints by matching observation_space
-(solver.py does this), not by highest step number.
-
-THE APP FLOW (decided): user picks a container size within limits ->
-boxes are generated by REVERSE CONSTRUCTION so they tile it EXACTLY ->
-user watches the bot, competes against it, or solves it alone.
-
-REVERSE CONSTRUCTION (environment.py, box_source="perfect")
-Recursively cuts the container into pieces, always splitting the largest,
-so the pieces tile it exactly and a 100% packing is guaranteed. reset()
-also stores env.solution = [(box, x, y, z, l, w, h)] -- the app can use it
-as a hint or a "show me" button. VERIFIED over 200 episodes:
-  - pieces tile the container exactly: 200/200
-  - 100% IS reachable by drop-from-above: 200/200, worst fill = 1.0000
-    (replay the solution bottom-up; each piece lands on a floor its
-    neighbours have already filled exactly to its underside)
-  - greedy on these puzzles: 6^3 91.0%, 10^3 83.5%, 14^3 80.3% vs a real
-    100% ceiling, so there is 9-20pp of genuine headroom.
-
-CRITICAL APP RULE: the agent can only DROP boxes from above -- it cannot
-slide one sideways into a pocket under an overhang. The human player must
-be held to the SAME rule (pick x, y and an orientation; gravity does the
-rest) or compete mode is unfair in the human's favour.
-
-BOX DIMS NOW SCALE WITH THE CONTAINER. 30 boxes of 2-5 units are 130% of a
-10^3 container but only 48% of a 14^3 one -- which would have silently
-recreated bug 1. Dims are sampled in [0.2*side, 0.5*side] (the papers use
-[L/10, L/2]), which holds the ratio near 130% at every size and reproduces
-the validated 2-5 range exactly at side 10.
-
-ARCHIVED MODEL: stage3_validated_1M_grid10.zip is the model behind the
-+2.95pp / +4.70pp results above. It pairs with commit f793093 and will NOT
-load against the current env (grid 14, and the observation gained a
-"container" key). Keep it as the artifact for those numbers.
+THEN, IF THE MODEL MATTERS MORE THAN THE APP
+1. Train on split_variety>0 puzzles. The shipped model trained on
+   equalised piece sizes (always split the largest), but the app now serves
+   varied ones. It handles them fine -- better, in fact -- but matching the
+   distributions would be cleaner.
+2. Visualise the beam search: show candidate packings developing side by
+   side and dimming as they are abandoned. This is the most interesting
+   thing in the system and nothing on screen currently shows it.
+3. EMS -- still only if fill plateaus. Measured upside ~5.7pp.
 
 LATER (app layer, after core RL is validated):
 - Gradio + HF Space, Plotly/Three.js 3D visualization.

@@ -1,10 +1,21 @@
-# virtualenv -- ~25k files, and it's rebuildable from requirements.txt
+# virtualenv -- ~25k files, rebuildable from requirements.txt
 venv/
 
 # python bytecode
 __pycache__/
 *.pyc
 
-# training artifacts
+# training output: TensorBoard runs and the checkpoint stream (~900MB).
+# Runs share checkpoints/ and their filenames collide by step number, so
+# never assume the highest number is the newest run -- see model_loader.py
 tb_logs/
+checkpoints/
+
+# logs and scratch
+*.log
+*.tmp.json
+
+# model weights are big and rebuildable -- except the one we ship, which
+# lets a fresh clone run the app with no training
 *.zip
+!model/packing_policy.zip

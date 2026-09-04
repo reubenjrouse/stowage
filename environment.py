@@ -60,6 +60,8 @@ class BinPackingEnv(gym.Env):
         scale_boxes: bool = True,
         box_source: str = "random",
         min_piece: int = 2,
+        split_variety: float = 0.0,
+        fixed_container: tuple[int, int, int] | None = None,
     ):
         super().__init__()
         if not 1 <= n_rotations <= 6:
@@ -128,6 +130,15 @@ class BinPackingEnv(gym.Env):
             raise ValueError("box_source must be 'random', 'perfect' or 'mixed'")
         self.box_source = box_source
         self.min_piece = min_piece
+        # 0.0 = always split the largest piece, which EQUALISES sizes (the
+        # original behaviour, and what the current model trained on -- it
+        # produces puzzles full of near-identical boxes). Higher values split
+        # a random piece that often, giving a genuine mix of big and small.
+        self.split_variety = float(split_variety)
+        # The app lets a player choose exact container dimensions. Randomised
+        # sampling draws each axis independently, so it cannot express "10x8x11";
+        # this pins all three.
+        self.fixed_container = fixed_container
         self.solution = None
 
         # What the agent gets to see each step:
@@ -219,7 +230,10 @@ class BinPackingEnv(gym.Env):
             splittable = [i for i, p in enumerate(pieces) if any(p[3 + a] >= 2 * m for a in range(3))]
             if not splittable:
                 break  # everything is already at the minimum piece size
-            i = max(splittable, key=lambda k: pieces[k][3] * pieces[k][4] * pieces[k][5])
+            if self.split_variety > 0 and self.np_random.random() < self.split_variety:
+                i = int(self.np_random.choice(splittable))
+            else:
+                i = max(splittable, key=lambda k: pieces[k][3] * pieces[k][4] * pieces[k][5])
             x, y, z, l, w, h = pieces.pop(i)
             dims = [l, w, h]
             axes = [a for a in range(3) if dims[a] >= 2 * m]
@@ -301,7 +315,16 @@ class BinPackingEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
 
-        if self.randomize:
+        if self.fixed_container is not None:
+            self.cur_gx, self.cur_gy, self.cur_h = (int(v) for v in self.fixed_container)
+            if not (self.cur_gx <= self.grid_size and self.cur_gy <= self.grid_size
+                    and self.cur_h <= self.max_height):
+                raise ValueError("fixed_container exceeds the grid/height caps")
+            # piece count still comes from boxes_range -- pinning the container
+            # must not also pin the number of pieces to the cap
+            self.n_active = int(self.np_random.integers(
+                self.boxes_range[0], min(self.boxes_range[1], self.max_boxes) + 1))
+        elif self.randomize:
             self.cur_gx = int(self.np_random.integers(self.grid_range[0], min(self.grid_range[1], self.grid_size) + 1))
             self.cur_gy = int(self.np_random.integers(self.grid_range[0], min(self.grid_range[1], self.grid_size) + 1))
             self.cur_h = int(self.np_random.integers(self.height_range[0], min(self.height_range[1], self.max_height) + 1))

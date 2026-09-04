@@ -1,0 +1,449 @@
+<title>Packing Bot Replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<style>
+  /* Deliberately single-theme: a white studio ground, as asked for.
+     Every colour is painted explicitly so the page holds on any host. */
+  :root{
+    --ground:#ffffff;
+    --panel:#f5f8f4;
+    --ink:#101a14;
+    --muted:#6b776f;
+    --faint:#97a49a;
+    --rule:#e3e9e2;
+    --rule-strong:#ccd6ca;
+    --forest:#1b4332;
+    --amber:#e09b3d;
+    --amber-ink:#a86c14;
+    --good:#2f7d5d;
+    --shadow:0 1px 2px rgba(16,26,20,.05), 0 8px 24px rgba(16,26,20,.06);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+
+  /* ---------- header ---------- */
+  header{
+    display:flex; align-items:baseline; gap:18px; flex-wrap:wrap;
+    padding:18px 24px 14px; border-bottom:1px solid var(--rule);
+  }
+  h1{
+    font-family:Archivo,system-ui,sans-serif; font-weight:700;
+    font-size:19px; letter-spacing:-.02em; margin:0; text-wrap:balance;
+  }
+  .sub{font-size:13px; color:var(--muted);}
+  .sub b{font-family:"IBM Plex Mono",monospace; font-weight:500; color:var(--ink); font-variant-numeric:tabular-nums;}
+  .spacer{flex:1;}
+
+  .runs{display:flex; gap:6px;}
+  .runs button{
+    font:500 12.5px/1 "IBM Plex Sans",sans-serif; letter-spacing:.02em;
+    padding:7px 13px; border-radius:6px; cursor:pointer;
+    background:var(--ground); color:var(--muted);
+    border:1px solid var(--rule-strong); transition:all .15s ease;
+  }
+  .runs button:hover{color:var(--ink); border-color:var(--faint);}
+  .runs button[aria-pressed="true"]{
+    background:var(--ink); color:#fff; border-color:var(--ink);
+  }
+  .runs button:focus-visible, .ctrl:focus-visible, #scrub:focus-visible{
+    outline:2px solid var(--amber); outline-offset:2px;
+  }
+
+  /* ---------- main split ---------- */
+  main{flex:1; display:flex; min-height:0;}
+  #stage{flex:1; position:relative; min-width:0;}
+  canvas{display:block; width:100%; height:100%;}
+
+  .hint{
+    position:absolute; left:20px; bottom:16px; font-size:11.5px;
+    color:var(--faint); letter-spacing:.03em; pointer-events:none;
+  }
+
+  /* ---------- inspector ---------- */
+  aside{
+    width:268px; flex:none; border-left:1px solid var(--rule);
+    background:var(--panel); padding:20px; overflow-y:auto;
+    display:flex; flex-direction:column; gap:20px;
+  }
+  .lab{
+    font-size:10.5px; font-weight:600; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--faint); margin-bottom:9px;
+  }
+  .fillbig{
+    font-family:Archivo,sans-serif; font-weight:700; font-size:42px;
+    letter-spacing:-.03em; line-height:1; font-variant-numeric:tabular-nums;
+  }
+  .fillnote{font-size:12px; color:var(--muted); margin-top:5px;}
+  .bar{height:5px; border-radius:3px; background:var(--rule-strong); margin-top:11px; overflow:hidden;}
+  .bar span{display:block; height:100%; background:var(--forest); width:0; transition:width .18s ease;}
+
+  dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:7px 14px; font-size:12.5px;}
+  dt{color:var(--muted);}
+  dd{margin:0; text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;}
+
+  .card{
+    background:var(--ground); border:1px solid var(--rule);
+    border-radius:8px; padding:14px; box-shadow:var(--shadow);
+  }
+  .card.active{border-color:var(--amber);}
+  .swatch{width:11px; height:11px; border-radius:2px; display:inline-block; vertical-align:-1px; margin-right:7px;}
+  .boxname{font-family:Archivo,sans-serif; font-weight:600; font-size:14px;}
+  .dims{font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--muted); margin-top:6px;}
+  .badge{
+    display:inline-block; font-size:10.5px; font-weight:600; letter-spacing:.06em;
+    text-transform:uppercase; padding:3px 8px; border-radius:4px;
+  }
+  .badge.solved{background:rgba(47,125,93,.1); color:var(--good);}
+  .badge.partial{background:rgba(224,155,61,.14); color:var(--amber-ink);}
+
+  /* ---------- transport ---------- */
+  footer{
+    border-top:1px solid var(--rule); padding:13px 24px;
+    display:flex; align-items:center; gap:16px;
+  }
+  .ctrl{
+    font:500 12.5px/1 "IBM Plex Sans",sans-serif;
+    padding:9px 16px; border-radius:6px; cursor:pointer;
+    border:1px solid var(--ink); background:var(--ink); color:#fff;
+    transition:opacity .15s ease; min-width:82px;
+  }
+  .ctrl:hover{opacity:.85;}
+  .ctrl.ghost{background:var(--ground); color:var(--ink); border-color:var(--rule-strong);}
+  #scrub{flex:1; accent-color:var(--ink); cursor:pointer; min-width:80px;}
+  .count{
+    font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--muted);
+    font-variant-numeric:tabular-nums; white-space:nowrap;
+  }
+
+  @media (max-width:820px){
+    main{flex-direction:column;}
+    aside{width:auto; border-left:none; border-top:1px solid var(--rule); max-height:38vh;}
+    #stage{min-height:300px;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition-duration:.01ms !important;}
+  }
+</style>
+
+<header>
+  <h1>Packing Bot Replay</h1>
+  <div class="sub">policy trained <b id="steps">—</b> steps · watching it pack, one box at a time</div>
+  <div class="spacer"></div>
+  <div class="runs" id="runs" role="group" aria-label="Choose a puzzle"></div>
+</header>
+
+<main>
+  <div id="stage">
+    <div class="hint">drag to orbit · scroll to zoom</div>
+  </div>
+
+  <aside>
+    <div>
+      <div class="lab">Container filled</div>
+      <div class="fillbig" id="fillnow">0.0%</div>
+      <div class="bar"><span id="fillbar"></span></div>
+      <div class="fillnote" id="fillnote">—</div>
+    </div>
+
+    <div>
+      <div class="lab">Now placing</div>
+      <div class="card" id="curcard">
+        <div class="boxname"><span class="swatch" id="curswatch"></span><span id="curname">—</span></div>
+        <div class="dims" id="curdims">waiting to start</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="lab">This puzzle</div>
+      <dl>
+        <dt>Container</dt><dd id="mcont">—</dd>
+        <dt>Pieces</dt><dd id="mpieces">—</dd>
+        <dt>Placed</dt><dd id="mplaced">—</dd>
+        <dt>Search</dt><dd id="mmethod">—</dd>
+        <dt>Final fill</dt><dd id="mfill">—</dd>
+      </dl>
+      <div style="margin-top:12px"><span class="badge" id="mbadge">—</span></div>
+    </div>
+
+    <div>
+      <div class="lab">How to read it</div>
+      <div style="font-size:12.5px; color:var(--muted); line-height:1.55">
+        Boxes darken as the sequence advances, so the finished stack shows the
+        order the bot chose. The amber box is the one falling now. Pieces were
+        cut from the container, so a flawless answer always exists — the bot
+        finds it on small puzzles and gets close on large ones.
+      </div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <button class="ctrl" id="play">Pause</button>
+  <button class="ctrl ghost" id="restart">Restart</button>
+  <input type="range" id="scrub" min="0" max="1000" value="0" step="1" aria-label="Scrub through placements">
+  <div class="count" id="count">0 / 0</div>
+</footer>
+
+<script>
+const DATA = {"model_steps": 3375000, "runs": [{"label": "easy", "seed": 0, "method": "beam", "container": {"x": 12, "y": 11, "z": 10}, "n_pieces": 4, "fill": 1.0, "solved": true, "placements": [{"box": 2, "rot": 0, "x": 0, "y": 0, "z": 0, "l": 10, "w": 9, "h": 10}, {"box": 0, "rot": 0, "x": 10, "y": 0, "z": 0, "l": 2, "w": 11, "h": 10}, {"box": 1, "rot": 5, "x": 0, "y": 9, "z": 0, "l": 6, "w": 2, "h": 10}, {"box": 3, "rot": 5, "x": 6, "y": 9, "z": 0, "l": 4, "w": 2, "h": 10}], "solution": [{"box": 0, "x": 0, "y": 0, "z": 0, "l": 2, "w": 11, "h": 10}, {"box": 1, "x": 2, "y": 9, "z": 0, "l": 10, "w": 2, "h": 6}, {"box": 2, "x": 2, "y": 0, "z": 0, "l": 10, "w": 9, "h": 10}, {"box": 3, "x": 2, "y": 9, "z": 6, "l": 10, "w": 2, "h": 4}]}, {"label": "medium", "seed": 0, "method": "beam", "container": {"x": 12, "y": 11, "z": 10}, "n_pieces": 8, "fill": 0.9394, "solved": false, "placements": [{"box": 6, "rot": 0, "x": 0, "y": 0, "z": 0, "l": 2, "w": 11, "h": 10}, {"box": 4, "rot": 2, "x": 2, "y": 0, "z": 0, "l": 3, "w": 8, "h": 10}, {"box": 1, "rot": 3, "x": 5, "y": 0, "z": 0, "l": 4, "w": 7, "h": 10}, {"box": 3, "rot": 0, "x": 2, "y": 9, "z": 0, "l": 10, "w": 2, "h": 10}, {"box": 7, "rot": 5, "x": 5, "y": 7, "z": 0, "l": 6, "w": 2, "h": 10}, {"box": 2, "rot": 5, "x": 9, "y": 0, "z": 0, "l": 3, "w": 4, "h": 10}, {"box": 5, "rot": 2, "x": 9, "y": 5, "z": 0, "l": 3, "w": 2, "h": 10}], "solution": [{"box": 0, "x": 2, "y": 9, "z": 6, "l": 10, "w": 2, "h": 4}, {"box": 1, "x": 2, "y": 3, "z": 0, "l": 10, "w": 4, "h": 7}, {"box": 2, "x": 2, "y": 3, "z": 7, "l": 10, "w": 4, "h": 3}, {"box": 3, "x": 2, "y": 7, "z": 0, "l": 10, "w": 2, "h": 10}, {"box": 4, "x": 4, "y": 0, "z": 0, "l": 8, "w": 3, "h": 10}, {"box": 5, "x": 2, "y": 0, "z": 0, "l": 2, "w": 3, "h": 10}, {"box": 6, "x": 0, "y": 0, "z": 0, "l": 2, "w": 11, "h": 10}, {"box": 7, "x": 2, "y": 9, "z": 0, "l": 10, "w": 2, "h": 6}]}, {"label": "hard", "seed": 3, "method": "sample", "container": {"x": 12, "y": 8, "z": 8}, "n_pieces": 21, "fill": 1.0, "solved": true, "placements": [{"box": 18, "rot": 1, "x": 0, "y": 6, "z": 0, "l": 12, "w": 2, "h": 3}, {"box": 19, "rot": 1, "x": 0, "y": 6, "z": 3, "l": 12, "w": 2, "h": 3}, {"box": 11, "rot": 5, "x": 0, "y": 6, "z": 6, "l": 4, "w": 2, "h": 2}, {"box": 0, "rot": 1, "x": 0, "y": 4, "z": 0, "l": 10, "w": 2, "h": 5}, {"box": 6, "rot": 4, "x": 0, "y": 4, "z": 5, "l": 4, "w": 2, "h": 3}, {"box": 13, "rot": 1, "x": 0, "y": 2, "z": 0, "l": 7, "w": 2, "h": 5}, {"box": 9, "rot": 1, "x": 0, "y": 0, "z": 0, "l": 5, "w": 2, "h": 5}, {"box": 1, "rot": 1, "x": 5, "y": 0, "z": 0, "l": 5, "w": 2, "h": 5}, {"box": 16, "rot": 1, "x": 7, "y": 2, "z": 0, "l": 5, "w": 2, "h": 5}, {"box": 5, "rot": 1, "x": 0, "y": 0, "z": 5, "l": 5, "w": 4, "h": 3}, {"box": 8, "rot": 1, "x": 5, "y": 0, "z": 5, "l": 5, "w": 4, "h": 3}, {"box": 20, "rot": 3, "x": 10, "y": 4, "z": 0, "l": 2, "w": 2, "h": 5}, {"box": 12, "rot": 1, "x": 4, "y": 4, "z": 5, "l": 3, "w": 2, "h": 3}, {"box": 2, "rot": 1, "x": 7, "y": 4, "z": 5, "l": 5, "w": 2, "h": 3}, {"box": 7, "rot": 4, "x": 10, "y": 2, "z": 5, "l": 2, "w": 2, "h": 3}, {"box": 3, "rot": 4, "x": 10, "y": 0, "z": 0, "l": 2, "w": 2, "h": 3}, {"box": 17, "rot": 4, "x": 10, "y": 0, "z": 3, "l": 2, "w": 2, "h": 3}, {"box": 10, "rot": 1, "x": 7, "y": 6, "z": 6, "l": 3, "w": 2, "h": 2}, {"box": 14, "rot": 2, "x": 4, "y": 6, "z": 6, "l": 3, "w": 2, "h": 2}, {"box": 4, "rot": 1, "x": 10, "y": 0, "z": 6, "l": 2, "w": 2, "h": 2}, {"box": 15, "rot": 0, "x": 10, "y": 6, "z": 6, "l": 2, "w": 2, "h": 2}], "solution": [{"box": 0, "x": 0, "y": 0, "z": 4, "l": 10, "w": 5, "h": 2}, {"box": 1, "x": 2, "y": 0, "z": 2, "l": 5, "w": 5, "h": 2}, {"box": 2, "x": 5, "y": 0, "z": 0, "l": 5, "w": 3, "h": 2}, {"box": 3, "x": 5, "y": 5, "z": 6, "l": 2, "w": 3, "h": 2}, {"box": 4, "x": 10, "y": 0, "z": 0, "l": 2, "w": 2, "h": 2}, {"box": 5, "x": 0, "y": 5, "z": 4, "l": 5, "w": 3, "h": 4}, {"box": 6, "x": 10, "y": 2, "z": 4, "l": 2, "w": 3, "h": 4}, {"box": 7, "x": 0, "y": 0, "z": 2, "l": 2, "w": 3, "h": 2}, {"box": 8, "x": 7, "y": 5, "z": 4, "l": 5, "w": 3, "h": 4}, {"box": 9, "x": 0, "y": 0, "z": 0, "l": 5, "w": 5, "h": 2}, {"box": 10, "x": 7, "y": 3, "z": 6, "l": 3, "w": 2, "h": 2}, {"box": 11, "x": 10, "y": 0, "z": 4, "l": 2, "w": 2, "h": 4}, {"box": 12, "x": 7, "y": 0, "z": 6, "l": 3, "w": 3, "h": 2}, {"box": 13, "x": 0, "y": 0, "z": 6, "l": 7, "w": 5, "h": 2}, {"box": 14, "x": 10, "y": 2, "z": 0, "l": 2, "w": 3, "h": 2}, {"box": 15, "x": 0, "y": 3, "z": 2, "l": 2, "w": 2, "h": 2}, {"box": 16, "x": 7, "y": 0, "z": 2, "l": 5, "w": 5, "h": 2}, {"box": 17, "x": 5, "y": 5, "z": 4, "l": 2, "w": 3, "h": 2}, {"box": 18, "x": 0, "y": 5, "z": 0, "l": 12, "w": 3, "h": 2}, {"box": 19, "x": 0, "y": 5, "z": 2, "l": 12, "w": 3, "h": 2}, {"box": 20, "x": 5, "y": 3, "z": 0, "l": 5, "w": 2, "h": 2}]}]};
+
+/* ---------- palette: boxes darken along the placement order ---------- */
+const RAMP_A = {r:0xd2, g:0xe3, b:0xc8};   // pale sage, placed first
+const RAMP_B = {r:0x1b, g:0x43, b:0x32};   // deep forest, placed last
+const AMBER  = 0xe09b3d;
+
+function rampColor(t){
+  const m = (a,b)=>Math.round(a+(b-a)*t);
+  return (m(RAMP_A.r,RAMP_B.r)<<16) | (m(RAMP_A.g,RAMP_B.g)<<8) | m(RAMP_A.b,RAMP_B.b);
+}
+const hex = c => '#' + c.toString(16).padStart(6,'0');
+
+/* ---------- scene ---------- */
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setClearColor(0xffffff, 1);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 500);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xdce4d8, 0.78));
+const key = new THREE.DirectionalLight(0xffffff, 0.62);
+key.position.set(16, 26, 12);
+key.castShadow = true;
+key.shadow.mapSize.set(1024,1024);
+key.shadow.camera.left = -22; key.shadow.camera.right = 22;
+key.shadow.camera.top = 22;   key.shadow.camera.bottom = -22;
+key.shadow.radius = 3;
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.2);
+fill.position.set(-14, 10, -10);
+scene.add(fill);
+
+const world = new THREE.Group();
+scene.add(world);
+
+/* orbit: hand-rolled, so the page needs only the one library */
+let yaw = -0.72, pitch = 0.52, dist = 34, dragging = false, px = 0, py = 0;
+const el = renderer.domElement;
+el.addEventListener('pointerdown', e=>{dragging=true; px=e.clientX; py=e.clientY; el.setPointerCapture(e.pointerId);});
+el.addEventListener('pointerup',   e=>{dragging=false; el.releasePointerCapture(e.pointerId);});
+el.addEventListener('pointermove', e=>{
+  if(!dragging) return;
+  yaw   -= (e.clientX-px)*0.008;
+  pitch += (e.clientY-py)*0.008;   // drag down -> look from above
+  pitch = Math.max(-0.25, Math.min(1.35, pitch));
+  px = e.clientX; py = e.clientY;
+});
+el.addEventListener('wheel', e=>{
+  e.preventDefault();
+  dist = Math.max(14, Math.min(80, dist + Math.sign(e.deltaY)*2.2));
+}, {passive:false});
+
+function placeCamera(){
+  camera.position.set(
+    Math.sin(yaw)*Math.cos(pitch)*dist,
+    Math.sin(pitch)*dist,
+    Math.cos(yaw)*Math.cos(pitch)*dist
+  );
+  camera.lookAt(0, 0, 0);
+}
+
+function resize(){
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w,h,false);
+  camera.aspect = w/Math.max(h,1);
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+/* ---------- build one puzzle ---------- */
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let run, boxes = [], progress = 0, playing = true, containerVol = 1;
+
+function clearWorld(){
+  while(world.children.length) world.remove(world.children[0]);
+  boxes = [];
+}
+
+function buildRun(r){
+  run = r; clearWorld();
+  const C = r.container;
+  containerVol = C.x * C.y * C.z;
+  const cx = C.x/2, cy = C.z/2, cz = C.y/2;   // env z is height -> three y
+
+  // floor that catches the shadow
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(90,90),
+    new THREE.ShadowMaterial({opacity:0.13})
+  );
+  floor.rotation.x = -Math.PI/2;
+  floor.position.y = -cy - 0.02;
+  floor.receiveShadow = true;
+  world.add(floor);
+
+  // container as a thin wireframe cage
+  const cage = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(C.x, C.z, C.y)),
+    new THREE.LineBasicMaterial({color:0xb3c2b3})
+  );
+  world.add(cage);
+
+  // faint footprint grid on the floor
+  const grid = new THREE.GridHelper(Math.max(C.x,C.y), Math.max(C.x,C.y), 0xdfe7dd, 0xeef2ec);
+  grid.position.y = -cy;
+  world.add(grid);
+
+  r.placements.forEach((p,i)=>{
+    const t = r.placements.length>1 ? i/(r.placements.length-1) : 0;
+    const col = rampColor(t);
+    const geo = new THREE.BoxGeometry(p.l, p.h, p.w);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({color:col}));
+    mesh.castShadow = true; mesh.receiveShadow = true;
+
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial({color:0x18351f, transparent:true, opacity:0.26})
+    );
+    mesh.add(edges);
+
+    const target = new THREE.Vector3(
+      p.x + p.l/2 - cx,
+      p.z + p.h/2 - cy,
+      p.y + p.w/2 - cz
+    );
+    mesh.position.copy(target);
+    mesh.visible = false;
+    world.add(mesh);
+    boxes.push({mesh, target, col, p, vol:p.l*p.w*p.h, drop:C.z + 7 - p.z});
+  });
+
+  dist = Math.max(C.x, C.y, C.z) * 2.5;
+  progress = 0;
+  document.getElementById('scrub').max = r.placements.length * 100;
+  paintMeta();
+}
+
+/* ---------- animation ---------- */
+const easeIn  = t => t*t;                       // falling accelerates
+const easeOut = t => 1-Math.pow(1-t,3);
+
+function applyProgress(){
+  const done = Math.floor(progress);
+  const frac = progress - done;
+
+  boxes.forEach((b,i)=>{
+    if(i < done){
+      b.mesh.visible = true;
+      b.mesh.position.copy(b.target);
+      b.mesh.scale.set(1,1,1);
+      b.mesh.material.color.setHex(b.col);
+    } else if(i === done && frac > 0){
+      b.mesh.visible = true;
+      b.mesh.material.color.setHex(AMBER);
+      if(frac < 0.72){                             // the fall
+        const t = easeIn(frac/0.72);
+        b.mesh.position.set(b.target.x, b.target.y + b.drop*(1-t), b.target.z);
+        b.mesh.scale.set(1,1,1);
+      } else {                                     // the settle
+        const t = easeOut((frac-0.72)/0.28);
+        b.mesh.position.copy(b.target);
+        const squash = 1 - 0.13*Math.sin(t*Math.PI);
+        b.mesh.scale.set(1 + (1-squash)*0.5, squash, 1 + (1-squash)*0.5);
+      }
+    } else {
+      b.mesh.visible = false;
+    }
+  });
+
+  let vol = 0;
+  for(let i=0;i<done;i++) vol += boxes[i].vol;
+  const pct = vol/containerVol;
+  document.getElementById('fillnow').textContent = (pct*100).toFixed(1)+'%';
+  document.getElementById('fillbar').style.width = (pct*100)+'%';
+  document.getElementById('count').textContent = done+' / '+boxes.length;
+  document.getElementById('scrub').value = Math.round(progress*100);
+  document.getElementById('mplaced').textContent = done;
+
+  const cur = boxes[Math.min(done, boxes.length-1)];
+  const live = done < boxes.length;
+  document.getElementById('curcard').classList.toggle('active', live && frac>0);
+  document.getElementById('curswatch').style.background = live ? (frac>0 ? hex(AMBER) : hex(cur.col)) : hex(boxes[boxes.length-1].col);
+  document.getElementById('curname').textContent = live ? ('Box '+(done+1)) : 'Finished';
+  document.getElementById('curdims').textContent = live
+    ? cur.p.l+'x'+cur.p.w+'x'+cur.p.h+'  ->  x'+cur.p.x+' y'+cur.p.y+' z'+cur.p.z
+    : boxes.length+' boxes placed';
+  document.getElementById('fillnote').textContent = live
+    ? 'of '+run.container.x+'x'+run.container.y+'x'+run.container.z+' container'
+    : (run.solved ? 'perfect fit — every piece placed' : (run.n_pieces-boxes.length)+' pieces left over');
+}
+
+function paintMeta(){
+  const C = run.container;
+  document.getElementById('mcont').textContent = C.x+'x'+C.y+'x'+C.z;
+  document.getElementById('mpieces').textContent = run.n_pieces;
+  document.getElementById('mmethod').textContent = run.method==='beam' ? 'beam' : 'best-of-16';
+  document.getElementById('mfill').textContent = (run.fill*100).toFixed(1)+'%';
+  const b = document.getElementById('mbadge');
+  b.textContent = run.solved ? 'Solved perfectly' : 'Best effort';
+  b.className = 'badge ' + (run.solved ? 'solved' : 'partial');
+}
+
+let last = performance.now();
+function frame(now){
+  const dt = Math.min((now-last)/1000, 0.05); last = now;
+  if(playing && progress < boxes.length){
+    progress = Math.min(boxes.length, progress + dt*(reduceMotion ? 6 : 1.45));
+    if(progress >= boxes.length){ playing = false; document.getElementById('play').textContent = 'Replay'; }
+  }
+  applyProgress();
+  if(!dragging) yaw += dt*0.045;               // slow ambient drift
+  placeCamera();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+/* ---------- wiring ---------- */
+const runsEl = document.getElementById('runs');
+DATA.runs.forEach((r,i)=>{
+  const b = document.createElement('button');
+  b.textContent = r.label[0].toUpperCase()+r.label.slice(1)+' · '+r.n_pieces;
+  b.setAttribute('aria-pressed', i===0 ? 'true':'false');
+  b.onclick = ()=>{
+    [...runsEl.children].forEach(c=>c.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    buildRun(r); playing = true; document.getElementById('play').textContent = 'Pause';
+  };
+  runsEl.appendChild(b);
+});
+
+document.getElementById('play').onclick = e=>{
+  if(progress >= boxes.length){ progress = 0; playing = true; e.target.textContent = 'Pause'; return; }
+  playing = !playing; e.target.textContent = playing ? 'Pause' : 'Play';
+};
+document.getElementById('restart').onclick = ()=>{
+  progress = 0; playing = true; document.getElementById('play').textContent = 'Pause';
+};
+document.getElementById('scrub').oninput = e=>{
+  progress = Math.min(boxes.length, e.target.value/100);
+  playing = false; document.getElementById('play').textContent = 'Play';
+};
+
+document.getElementById('steps').textContent = (DATA.model_steps/1e6).toFixed(2)+'M';
+buildRun(DATA.runs[0]);
+resize();
+requestAnimationFrame(frame);
+</script>

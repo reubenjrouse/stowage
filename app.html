@@ -1,0 +1,840 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packing Puzzle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  :root{
+    --ground:#ffffff; --panel:#faf8f5; --ink:#1c1712; --muted:#7c7267;
+    --faint:#a89c8d; --rule:#eae3d9; --rule-strong:#d8cec0;
+    --cocoa:#6b4423; --active:#c86a2b; --good:#2f7d5d; --bad:#a4402f;
+    --shadow:0 1px 2px rgba(28,23,18,.05), 0 8px 24px rgba(28,23,18,.06);
+    --lift:0 12px 40px rgba(28,23,18,.14);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0; background:var(--ground); color:var(--ink); overflow:hidden;
+    font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased; display:flex; flex-direction:column;}
+
+  header{display:flex; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid var(--rule); position:relative; z-index:5;}
+  h1{font-family:Archivo,sans-serif; font-weight:700; font-size:16px; letter-spacing:-.02em; margin:0; white-space:nowrap;}
+  .modes{display:flex; gap:3px; background:var(--panel); padding:3px; border-radius:8px;}
+  .modes button{font:500 12.5px/1 "IBM Plex Sans",sans-serif; padding:8px 14px; border-radius:6px;
+    border:none; background:none; color:var(--muted); cursor:pointer; transition:all .14s ease;}
+  .modes button[aria-pressed="true"]{background:var(--ground); color:var(--ink); box-shadow:var(--shadow);}
+  .spacer{flex:1;}
+  button.go{font:600 12.5px/1 "IBM Plex Sans",sans-serif; padding:9px 15px; border-radius:6px;
+    border:1px solid var(--ink); background:var(--ink); color:#fff; cursor:pointer; white-space:nowrap;}
+  button.go:hover{opacity:.86;}
+  button.go[disabled]{opacity:.4; cursor:not-allowed;}
+  button.ghost{font:500 12.5px/1 "IBM Plex Sans",sans-serif; padding:8px 13px; border-radius:6px;
+    border:1px solid var(--rule-strong); background:var(--ground); color:var(--ink); cursor:pointer; white-space:nowrap;}
+  button.ghost:hover{border-color:var(--faint);}
+  button[hidden]{display:none;}
+  button:focus-visible, input:focus-visible{outline:2px solid var(--active); outline-offset:2px;}
+
+  /* ---- settings popover ---- */
+  #settings{position:absolute; top:56px; right:18px; width:266px; background:var(--ground);
+    border:1px solid var(--rule); border-radius:10px; box-shadow:var(--lift); padding:16px;
+    display:none; flex-direction:column; gap:15px; z-index:6;}
+  #settings.open{display:flex;}
+  .sgroup{display:flex; flex-direction:column; gap:8px;}
+  .slab{font-size:10px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--faint);}
+  .levels{display:grid; grid-template-columns:repeat(4,1fr); gap:5px;}
+  .levels button{font:500 11.5px/1 "IBM Plex Sans",sans-serif; padding:9px 0; border-radius:6px;
+    border:1px solid var(--rule-strong); background:var(--ground); color:var(--muted); cursor:pointer;}
+  .levels button[aria-pressed="true"]{background:var(--cocoa); border-color:var(--cocoa); color:#fff;}
+  .dims{display:grid; grid-template-columns:repeat(4,1fr); gap:7px;}
+  .dims div{display:flex; flex-direction:column; gap:4px;}
+  .dims label{font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); text-align:center;}
+  .dims input{width:100%; padding:7px 4px; text-align:center; font:500 12.5px/1 "IBM Plex Mono",monospace;
+    border:1px solid var(--rule-strong); border-radius:5px; background:var(--ground); color:var(--ink);}
+  .srow{display:flex; gap:6px;}
+  .srow button{flex:1;}
+  .note{font-size:11.5px; color:var(--muted); line-height:1.5;}
+
+  main{flex:1; position:relative; min-height:0;}
+  canvas{display:block; width:100%; height:100%;}
+  #divider{position:absolute; top:0; bottom:0; left:50%; width:1px; background:var(--rule); display:none;}
+
+  .hud{position:absolute; top:16px; pointer-events:none;}
+  #hudA{left:22px;} #hudB{right:22px; text-align:right; display:none;}
+  .hud .who{font-size:10px; font-weight:600; letter-spacing:.11em; text-transform:uppercase; color:var(--faint);}
+  .hud .pct{font-family:Archivo,sans-serif; font-weight:700; font-size:34px; letter-spacing:-.03em;
+    line-height:1.05; font-variant-numeric:tabular-nums;}
+  .hud .sub{font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums;}
+  .hud .track{height:3px; width:104px; border-radius:2px; background:var(--rule-strong); margin-top:7px; overflow:hidden;}
+  #hudB .track{margin-left:auto;}
+  .hud .track span{display:block; height:100%; width:0; background:var(--cocoa); transition:width .2s ease;}
+  #hudB .track span{background:var(--active);}
+
+  .overlay{position:absolute; left:0; right:0; bottom:13px; text-align:center; font-size:12px; color:var(--muted); pointer-events:none;}
+  .toast{position:absolute; top:52%; left:50%; transform:translate(-50%,-50%); background:var(--ink); color:#fff;
+    font-size:13px; padding:11px 20px; border-radius:7px; opacity:0; transition:opacity .2s ease; pointer-events:none;}
+  .toast.show{opacity:1;}
+  #startwrap{position:absolute; inset:0; display:none; align-items:center; justify-content:center;}
+  #startwrap button{font:600 14px/1 "IBM Plex Sans",sans-serif; padding:15px 34px; border-radius:8px;
+    border:none; background:var(--ink); color:#fff; cursor:pointer; box-shadow:var(--shadow);}
+  #startwrap button:hover{opacity:.88;}
+
+  /* ---- result card ---- */
+  #result{position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:4;}
+  #result.show{display:flex;}
+  #card{background:var(--ground); border:1px solid var(--rule); border-radius:12px; box-shadow:var(--lift);
+    padding:26px 30px; min-width:264px; text-align:center; animation:pop .34s cubic-bezier(.2,.9,.3,1.2);}
+  @keyframes pop{from{opacity:0; transform:scale(.9) translateY(8px);} to{opacity:1; transform:none;}}
+  #rtitle{font-family:Archivo,sans-serif; font-weight:700; font-size:26px; letter-spacing:-.025em; margin:0 0 6px;}
+  #rsub{font-size:12.5px; color:var(--muted); margin-bottom:16px;}
+  .scores{display:flex; gap:22px; justify-content:center; margin-bottom:18px;}
+  .score .n{font-family:Archivo,sans-serif; font-weight:700; font-size:27px; font-variant-numeric:tabular-nums; letter-spacing:-.02em;}
+  .score .k{font-size:10px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--faint);}
+  #rbtns{display:flex; gap:7px; justify-content:center; flex-wrap:wrap;}
+  /* when the bot finishes first this has to find the player, not wait to be
+     noticed in the header */
+  #raceprompt{position:absolute; left:50%; bottom:44px; transform:translateX(-50%);
+    display:none; align-items:center; gap:14px; background:var(--ink); color:#fff;
+    padding:10px 11px 10px 17px; border-radius:9px; box-shadow:var(--lift);
+    font-size:12.5px; z-index:3; animation:pop .3s cubic-bezier(.2,.9,.3,1.2);}
+  #raceprompt.show{display:flex;}
+  #raceprompt button{font:600 12px/1 "IBM Plex Sans",sans-serif; padding:8px 14px;
+    border-radius:6px; border:none; background:#fff; color:var(--ink); cursor:pointer;}
+  #raceprompt button:hover{opacity:.88;}
+  .confetti{position:absolute; width:8px; height:10px; border-radius:1px; pointer-events:none; z-index:7;}
+  @media (prefers-reduced-motion:reduce){*{animation:none !important; transition-duration:.01ms !important;}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Packing Puzzle</h1>
+  <div class="modes" id="modes" role="group" aria-label="Mode">
+    <button data-mode="watch" aria-pressed="true">Watch bot</button>
+    <button data-mode="play" aria-pressed="false">Play</button>
+    <button data-mode="compete" aria-pressed="false">Compete</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="ghost" id="undo" hidden>Undo</button>
+  <button class="ghost" id="done" hidden>Stop &amp; compare</button>
+  <button class="ghost" id="gear" aria-expanded="false">Settings</button>
+  <button class="go" id="newpuz">New puzzle</button>
+
+  <div id="settings">
+    <div class="sgroup">
+      <div class="slab">Difficulty</div>
+      <div class="levels" id="levels">
+        <button data-level="easy">Easy</button>
+        <button data-level="medium" aria-pressed="true">Medium</button>
+        <button data-level="hard">Hard</button>
+        <button data-level="custom">Custom</button>
+      </div>
+      <div class="note" id="levelnote">10x10x10 · 8-12 pieces</div>
+    </div>
+    <div class="sgroup">
+      <div class="slab">Container &amp; pieces</div>
+      <div class="dims">
+        <div><label for="gx">W</label><input type="number" id="gx" min="6" max="12" value="10"></div>
+        <div><label for="gy">D</label><input type="number" id="gy" min="6" max="12" value="10"></div>
+        <div><label for="gz">H</label><input type="number" id="gz" min="6" max="12" value="10"></div>
+        <div><label for="np">Pcs</label><input type="number" id="np" min="3" max="30" value="8"></div>
+      </div>
+    </div>
+    <div class="srow">
+      <button class="ghost" id="rand">Randomize</button>
+      <button class="ghost" id="hint">Show answer</button>
+    </div>
+    <div class="note">Every puzzle is cut from the container, so a flawless fit always exists. The bot finds it on small puzzles and rarely on large ones.</div>
+  </div>
+</header>
+
+<main id="stage">
+  <div id="divider"></div>
+  <div class="hud" id="hudA">
+    <div class="who" id="whoA">You</div>
+    <div class="pct" id="pctA">0%</div>
+    <div class="sub" id="subA">—</div>
+    <div class="track"><span id="trackA"></span></div>
+  </div>
+  <div class="hud" id="hudB">
+    <div class="who">Bot</div>
+    <div class="pct" id="pctB">0%</div>
+    <div class="sub" id="subB">—</div>
+    <div class="track"><span id="trackB"></span></div>
+    <div class="sub" style="margin-top:6px; font-style:italic">placing slowly on purpose</div>
+  </div>
+  <div id="raceprompt"><span id="rptext">—</span><button id="comparenow">Stop &amp; compare</button></div>
+  <div id="startwrap"><button id="startbtn">Start the race</button></div>
+  <div id="result"><div id="card">
+    <h2 id="rtitle">—</h2>
+    <div id="rsub">—</div>
+    <div class="scores" id="rscores"></div>
+    <div id="rbtns"></div>
+  </div></div>
+  <div class="toast" id="toast"></div>
+  <div class="overlay" id="overlay">drag to orbit · scroll to zoom</div>
+</main>
+
+<script>
+const el = id => document.getElementById(id);
+addEventListener('error', ev => {
+  const o = el('overlay');
+  if(!o) return;
+  const where = ev.lineno ? (' [line ' + ev.lineno + ':' + ev.colno + ']') : '';
+  const stack = ev.error && ev.error.stack ? (' · ' + ev.error.stack.split('\n')[1] || '') : '';
+  o.textContent = 'script error — ' + (ev.message || ev.error) + where + stack;
+  o.style.color = '#b03a2e';
+});
+
+const ROTS = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+const KRAFT = 0x9c6b40, PICKED = 0xc86a2b, GHOST_OK = 0x2e7d6b, GHOST_NO = 0xb03a2e;
+const LAYER_YOU = 1, LAYER_BOT = 2;
+const LEVELS = {
+  // grounded in the measured solve rates: few pieces are genuinely solvable
+  // (the bot manages ~97% of 3-4 piece puzzles), 16+ essentially never are
+  easy:   {side:[8,9],   pieces:[4,6]},
+  medium: {side:[10,10], pieces:[8,12]},
+  hard:   {side:[11,12], pieces:[16,22]},
+};
+
+let BOX_MAT = null, PICK_MAT = null;
+function boxMat(picked){
+  if(!BOX_MAT){
+    // The outline sits exactly on the surface; without a depth offset the two
+    // z-fight and shimmer as the camera drifts. That was the "flicker".
+    const mk = c => { const m = new THREE.MeshLambertMaterial({color:c});
+      m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1; return m; };
+    BOX_MAT = mk(KRAFT); PICK_MAT = mk(PICKED);
+  }
+  return picked ? PICK_MAT : BOX_MAT;
+}
+function boxMesh(l,w,h,picked){
+  const geo = new THREE.BoxGeometry(l,h,w);
+  const mesh = new THREE.Mesh(geo, boxMat(picked));
+  mesh.castShadow = true; mesh.receiveShadow = false;
+  mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color:0x4a2f16})));
+  return mesh;
+}
+function dims(p,rot){ const r=ROTS[rot]; return [p[r[0]],p[r[1]],p[r[2]]]; }
+// A 5x4x4 box has only 3 genuinely different orientations, not 6. Cycling the
+// full six made R look broken: half the presses changed nothing on screen.
+function uniqueRots(p){
+  const seen = new Set(), out = [];
+  for(let r=0;r<6;r++){ const k = dims(p,r).join(','); if(!seen.has(k)){ seen.add(k); out.push(r); } }
+  return out;
+}
+
+/* ---------- three.js ---------- */
+const stage = el('stage');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setClearColor(0xffffff,1);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38,1,.1,700);
+scene.add(new THREE.HemisphereLight(0xffffff,0xe6ded2,.82));
+const keyLight = new THREE.DirectionalLight(0xffffff,.58);
+keyLight.position.set(24,38,20); keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048,2048);
+keyLight.shadow.camera.left=-55; keyLight.shadow.camera.right=55;
+keyLight.shadow.camera.top=55; keyLight.shadow.camera.bottom=-55;
+keyLight.shadow.camera.near=1; keyLight.shadow.camera.far=170;
+keyLight.shadow.bias=-0.0006; keyLight.shadow.normalBias=0.03; keyLight.shadow.radius=2;
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0xffffff,.22);
+fillLight.position.set(-18,14,-16); scene.add(fillLight);
+scene.traverse(o=>{ if(o.isLight) o.layers.enableAll(); });
+
+let yaw=-.68, pitch=.52, dist=40, dragging=false, moved=false, ptrX=0, ptrY=0;
+const cv = renderer.domElement;
+cv.addEventListener('pointerdown',e=>{dragging=true;moved=false;ptrX=e.clientX;ptrY=e.clientY;cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointerup',e=>{dragging=false;cv.releasePointerCapture(e.pointerId); if(!moved) onClick(e);});
+cv.addEventListener('pointermove',e=>{
+  if(dragging){
+    if(Math.abs(e.clientX-ptrX)+Math.abs(e.clientY-ptrY)>3) moved=true;
+    yaw -= (e.clientX-ptrX)*.008;
+    pitch += (e.clientY-ptrY)*.008;
+    pitch = Math.max(-.15,Math.min(1.35,pitch));
+    ptrX=e.clientX; ptrY=e.clientY;
+  } else onHover(e);
+});
+cv.addEventListener('wheel',e=>{e.preventDefault(); dist=Math.max(14,Math.min(130,dist+Math.sign(e.deltaY)*2.6));},{passive:false});
+function resize(){ renderer.setSize(stage.clientWidth,stage.clientHeight,false); }
+addEventListener('resize',resize);
+
+/* ---------- a container plus its staging area ---------- */
+class Bin{
+  constructor(container, layer, pieces){
+    this.C = container; this.layer = layer; this.pieces = pieces;
+    this.group = new THREE.Group(); scene.add(this.group);
+    const [gx,gy,gz] = container;
+    this.hm = Array.from({length:gx},()=>new Array(gy).fill(0));
+    this.vol = gx*gy*gz; this.filled = 0; this.placed = []; this._used = new Set();
+    this.cx = gx/2; this.cy = gz/2; this.cz = gy/2;
+
+    // Each waiting box gets a real resting orientation, kept for the whole
+    // round. It is the rotation you actually pick the box up in, so the pile
+    // is honest about the fact that pieces can be turned.
+    this.rot = pieces.map(p=>{ const u = uniqueRots(p); return u[Math.floor(Math.random()*u.length)]; });
+
+    // Staging packs in rows, like words wrapping: each box advances x by its
+    // own width. A grid sized to the LARGEST piece left small boxes marooned.
+    this.gap = 0.5;
+    this.stageX0 = this.cx + 2.5;
+    this.stageZ0 = -this.cz;
+    const area = pieces.reduce((s,p)=>s+p[0]*p[1],0);
+    this.rowMax = Math.max(gx, Math.sqrt(area)*1.15);
+
+    // One mesh per piece, made once. Re-creating them on every placement
+    // churned ~60 geometries per click and never freed the old ones.
+    this.stage = [];
+    this.stageMeshes = pieces.map((p,i)=>{
+      const [l,w,h] = dims(p, this.rot[i]);
+      const m = boxMesh(l,w,h,false);
+      m.userData.pieceIndex = i;
+      this.group.add(m);
+      return m;
+    });
+    this.layoutStaging();
+
+    this.centre = new THREE.Vector3(0,0,0);          // orbit the container itself
+    this.extent = Math.max(gz, gy, this.stageX0 + this.spanX, this.spanZ);
+
+    const fw = gx + 6 + this.spanX, fd = Math.max(gy, this.spanZ) + 8;
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(fw,fd), new THREE.ShadowMaterial({opacity:.14}));
+    floor.rotation.x = -Math.PI/2;
+    floor.position.set((this.stageX0 + this.spanX)/2 - this.cx/2, -this.cy-0.02, 0);
+    floor.receiveShadow = true; this.group.add(floor);
+
+    this.group.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(gx,gz,gy)),
+      new THREE.LineBasicMaterial({color:0xcbbca8})));
+    const grid = new THREE.GridHelper(Math.max(gx,gy),Math.max(gx,gy),0xe8dfd2,0xf2ece3);
+    grid.position.y = -this.cy; this.group.add(grid);
+
+    this.group.traverse(o=>o.layers.set(layer));
+  }
+  layoutStaging(){
+    this.stage = [];
+    for(const i of this._used) this.stageMeshes[i].visible = false;
+    const order = this.pieces.map((p,i)=>({p,i})).filter(o=>!this._used.has(o.i))
+                      .sort((a,b)=>(b.p[0]*b.p[1]*b.p[2])-(a.p[0]*a.p[1]*a.p[2]));
+    let x = 0, z = 0, rowDepth = 0, widest = 0;
+    for(const o of order){
+      const [l,w,h] = dims(o.p, this.rot[o.i]);      // shown in its resting turn
+      if(x > 0 && x + l > this.rowMax){ x = 0; z += rowDepth + this.gap; rowDepth = 0; }
+      const mesh = this.stageMeshes[o.i];
+      mesh.visible = true;
+      mesh.position.set(this.stageX0 + x + l/2, -this.cy + h/2, this.stageZ0 + z + w/2);
+      this.stage.push({mesh, index:o.i});
+      x += l + this.gap; widest = Math.max(widest, x); rowDepth = Math.max(rowDepth, w);
+    }
+    if(this.spanX === undefined){ this.spanX = Math.max(widest,1); this.spanZ = Math.max(z+rowDepth,1); }
+  }
+  // turning a waiting box: swap its geometry in place and give it a quick pop
+  setRot(index, rot){
+    this.rot[index] = rot;
+    const mesh = this.stageMeshes[index];
+    const [l,w,h] = dims(this.pieces[index], rot);
+    mesh.geometry.dispose();
+    mesh.geometry = new THREE.BoxGeometry(l,h,w);
+    const old = mesh.children[0];
+    if(old){ old.geometry.dispose(); mesh.remove(old); }
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry),
+      new THREE.LineBasicMaterial({color:0x4a2f16}));
+    edges.layers.set(this.layer); mesh.add(edges);
+    mesh.userData.pop = 1;
+    this.layoutStaging();
+  }
+  landing(x,y,l,w){ let z=0; for(let i=x;i<x+l;i++) for(let j=y;j<y+w;j++) z=Math.max(z,this.hm[i][j]); return z; }
+  legal(x,y,l,w,h){
+    const [gx,gy,gz]=this.C;
+    if(x<0||y<0||x+l>gx||y+w>gy) return false;
+    return this.landing(x,y,l,w)+h <= gz;
+  }
+  anyLegalMove(){
+    for(const s of this.stage)
+      for(let r=0;r<6;r++){
+        const [l,w,h] = dims(this.pieces[s.index], r);
+        for(let x=0;x+l<=this.C[0];x++) for(let y=0;y+w<=this.C[1];y++)
+          if(this.landing(x,y,l,w)+h <= this.C[2]) return true;
+      }
+    return false;
+  }
+  worldPos(x,y,z,l,w,h){ return new THREE.Vector3(x+l/2-this.cx, z+h/2-this.cy, y+w/2-this.cz); }
+  add(index,x,y,z,l,w,h){
+    for(let i=x;i<x+l;i++) for(let j=y;j<y+w;j++) this.hm[i][j]=z+h;
+    const mesh = boxMesh(l,w,h,false);
+    const target = this.worldPos(x,y,z,l,w,h);
+    mesh.position.copy(target); this.group.add(mesh);
+    mesh.traverse(c=>c.layers.set(this.layer));
+    this.filled += l*w*h;
+    const rec = {mesh,target,drop:this.C[2]+7-z,anim:1,index,x,y,z,l,w,h};
+    this.placed.push(rec);
+    this._used.add(index); this.layoutStaging();
+    return rec;
+  }
+  removeLast(){
+    const r = this.placed.pop(); if(!r) return null;
+    this.group.remove(r.mesh); this.filled -= r.l*r.w*r.h;
+    const [gx,gy] = this.C;
+    this.hm = Array.from({length:gx},()=>new Array(gy).fill(0));
+    for(const p of this.placed)
+      for(let i=p.x;i<p.x+p.l;i++) for(let j=p.y;j<p.y+p.w;j++) this.hm[i][j]=Math.max(this.hm[i][j],p.z+p.h);
+    this._used.delete(r.index); this.layoutStaging();
+    return r;
+  }
+  dispose(){
+    // geometries are per-mesh and must be released by hand; materials are
+    // shared singletons, so leave those alone
+    this.group.traverse(o=>{ if(o.geometry) o.geometry.dispose(); });
+    scene.remove(this.group);
+  }
+  get fill(){ return this.filled/this.vol; }
+}
+
+/* ---------- state ---------- */
+let mode='watch', level='medium', spec=null, puzzle=null, botRun=null;
+let humanBin=null, botBin=null, ghost=null, botAnim=null;
+let sel=-1, selRot=0, busy=false, watchLoop=true, ended=false;
+let raceStart=0, humanDoneAt=0, botDoneAt=0;
+
+function toast(msg,ms=1900){ const t=el('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),ms); }
+async function post(path,body){
+  const r = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error((await r.json().catch(()=>({detail:'request failed'}))).detail);
+  return r.json();
+}
+const split = () => mode==='compete' && humanBin && botBin;
+function clearGhost(){
+  if(!ghost) return;
+  ghost.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
+  scene.remove(ghost); ghost=null;
+}
+function clearScene(){
+  if(humanBin){humanBin.dispose(); humanBin=null;}
+  if(botBin){botBin.dispose(); botBin=null;}
+  clearGhost(); botAnim=null;
+}
+
+/* ---------- a round ---------- */
+async function newRound(seed){
+  if(busy) return; busy=true; el('newpuz').disabled=true;
+
+  // Reset every mode-specific control BEFORE the network wait, or the previous
+  // mode's divider, second HUD and race button linger while the puzzle loads.
+  // everything the pointer and keyboard touch must be neutral BEFORE the
+  // await, or a click during loading works on a disposed container with a
+  // piece index from the previous puzzle
+  ended=false; sel=-1; selRot=0; puzzle=null; botRun=null;
+  raceStart=0; humanDoneAt=0; botDoneAt=0;
+  clearScene();
+  el('result').classList.remove('show');
+  el('raceprompt').classList.remove('show');
+  el('divider').style.display = mode==='compete' ? 'block' : 'none';
+  el('hudB').style.display    = mode==='compete' ? 'block' : 'none';
+  el('whoA').textContent      = mode==='watch' ? 'Bot' : 'You';
+  el('undo').hidden           = (mode==='watch');
+  el('done').hidden           = true;      // appears once a race is running
+  el('startwrap').style.display = mode==='compete' ? 'flex' : 'none';
+  el('startbtn').disabled = true;
+  el('startbtn').textContent = 'Preparing the bot…';
+  el('pctA').textContent='0%'; el('subA').textContent='—'; el('trackA').style.width='0%';
+  el('pctB').textContent='0%'; el('subB').textContent='—'; el('trackB').style.width='0%';
+  el('overlay').textContent = 'loading…';
+
+  try{
+    spec = {gx:+el('gx').value, gy:+el('gy').value, gz:+el('gz').value, n:+el('np').value};
+    puzzle = await post('/api/puzzle', seed ? {...spec, seed} : spec);
+    botRun = null; clearScene(); sel=-1; selRot=0;
+
+    if(mode!=='watch') humanBin = new Bin(puzzle.container, LAYER_YOU, puzzle.pieces);
+    if(mode!=='play')  botBin   = new Bin(puzzle.container, LAYER_BOT, puzzle.pieces);
+    const ref = humanBin||botBin;
+    dist = ref.extent * (mode==='compete' ? 2.7 : 2.05);
+
+    syncHud();
+    el('overlay').textContent = mode==='watch' ? 'the bot is thinking…'
+      : 'click a box on the ground · R turns it · click inside the container to drop';
+
+    if(mode!=='play'){
+      // the puzzle is already on screen and playable; only the bot is pending
+      botRun = await post('/api/solve', {...spec, seed:puzzle.seed});
+      botAnim = {i:0, t:0, running:(mode==='watch'), pace:(mode==='compete'?2.8:0.6)};
+      if(mode==='watch') el('overlay').textContent = botRun.method+' · decided in '+botRun.seconds+'s';
+      else {
+        el('startbtn').disabled = false;
+        el('startbtn').textContent = 'Start the race';
+        el('overlay').textContent = 'press start when you are ready';
+      }
+    }
+  }catch(err){ toast(err.message||'could not reach the server', 3200); }
+  finally{ busy=false; el('newpuz').disabled=false; }
+}
+
+/* ---------- endings ---------- */
+function confetti(){
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const cols = ['#9c6b40','#c86a2b','#b98552','#6b4423','#d8cec0'];
+  for(let i=0;i<44;i++){
+    const d = document.createElement('div');
+    d.className = 'confetti';
+    d.style.background = cols[i%cols.length];
+    d.style.left = (45+Math.random()*10)+'%';
+    d.style.top = '46%';
+    stage.appendChild(d);
+    const dx = (Math.random()-.5)*640, dy = 240+Math.random()*300, rot = (Math.random()-.5)*900;
+    d.animate([{transform:'translate(0,0) rotate(0deg)', opacity:1},
+               {transform:'translate('+dx+'px,'+dy+'px) rotate('+rot+'deg)', opacity:0}],
+              {duration:1500+Math.random()*700, easing:'cubic-bezier(.2,.7,.4,1)'})
+     .onfinish = ()=>d.remove();
+  }
+}
+function showResult(title, sub, scores, party, buttons){
+  el('rtitle').textContent = title;
+  el('rsub').textContent = sub;
+  el('rscores').innerHTML = scores.map(s=>
+    '<div class="score"><div class="n" style="color:'+s.colour+'">'+s.value+'</div><div class="k">'+s.key+'</div></div>').join('');
+  const box = el('rbtns'); box.innerHTML = '';
+  for(const b of buttons){
+    const el2 = document.createElement('button');
+    el2.className = b.primary ? 'go' : 'ghost';
+    el2.textContent = b.label; el2.onclick = b.act;
+    box.appendChild(el2);
+  }
+  el('result').classList.add('show');
+  if(party) confetti();
+}
+const secs = ms => (ms/1000).toFixed(1)+'s';
+function resumePlay(){            // step back into a round instead of ending it
+  ended = false;
+  el('result').classList.remove('show');
+  if(humanBin) humanBin.removeLast();
+  sel=-1; clearGhost(); refreshPickHighlight(); syncHud();
+}
+function finishRound(){
+  if(ended) return; ended = true;
+  const pct = b => (b.fill*100).toFixed(1)+'%';
+  const nextBtn  = {label:'New puzzle', primary:true, act:()=>{ watchLoop=(mode==='watch'); newRound(); }};
+  const againBtn = {label:'Retry this one', act:()=>newRound(puzzle && puzzle.seed)};
+
+  if(mode==='play'){
+    const perfect = humanBin.fill > 0.9999;
+    showResult(perfect ? 'Perfect fit' : 'No room left',
+      perfect ? 'every piece placed — nothing wasted'
+              : 'nothing else fits — step back and try a different arrangement',
+      [{key:'You', value:pct(humanBin), colour:'var(--cocoa)'}], perfect,
+      perfect ? [nextBtn, againBtn]
+              : [{label:'Undo last box', primary:true, act:resumePlay}, nextBtn, againBtn]);
+
+  } else if(mode==='watch'){
+    const perfect = botRun && botRun.solved;
+    showResult(perfect ? 'The bot solved it' : 'Bot finished',
+      perfect ? 'a flawless pack' : (puzzle.pieces.length-botRun.placements.length)+' pieces left over',
+      [{key:'Bot', value:pct(botBin), colour:'var(--active)'}], perfect, [nextBtn]);
+
+  } else {
+    // The pieces tile the container, so placing them all IS 100%. The race is
+    // therefore "first to a perfect pack"; short of that, the tighter pack
+    // wins, and an exact tie goes to whoever got there first.
+    const you = humanBin.fill, bot = botBin.fill;
+    const youPerfect = you > 0.9999, botPerfect = bot > 0.9999;
+    let win, why;
+    if(youPerfect && botPerfect){
+      win = humanDoneAt < botDoneAt;
+      why = 'both packed it perfectly — ' + (win ? 'you got there first' : 'the bot got there first');
+    } else if(youPerfect){ win = true;  why = 'you found a perfect pack — the bot never did'; }
+    else if(botPerfect){   win = false; why = 'the bot found a perfect pack first'; }
+    else if(Math.abs(you-bot) > 1e-9){
+      win = you > bot;
+      why = win ? 'neither of you packed it perfectly, but yours is tighter'
+                : 'beaten by ' + ((bot-you)*100).toFixed(1) + ' points';
+    } else { win = humanDoneAt && humanDoneAt < botDoneAt; why = 'identical packs — decided on time'; }
+
+    const yourTime = humanDoneAt ? secs(humanDoneAt-raceStart) : '—';
+    const botTime  = botDoneAt ? secs(botDoneAt-raceStart) : '—';
+    showResult(win ? 'You win' : 'The bot wins', why,
+      [{key:'You '+yourTime, value:pct(humanBin), colour:'var(--cocoa)'},
+       {key:'Bot '+botTime,  value:pct(botBin),  colour:'var(--active)'}],
+      win, [nextBtn, againBtn]);
+  }
+}
+function humanIsDone(){
+  return humanBin && (humanBin.stage.length===0 || !humanBin.anyLegalMove());
+}
+function maybeFinish(){
+  if(ended || mode==='watch') return;
+  if(humanIsDone() && !humanDoneAt) humanDoneAt = performance.now();
+  if(mode==='play'){ if(humanIsDone()) finishRound(); return; }
+
+  // Placing every piece IS 100%, because the pieces were cut from the
+  // container. So finishing the pile ends the race there and then.
+  if(humanBin.stage.length === 0){ concludeRace(); return; }
+
+  const botDone = botAnim && !botAnim.running && botRun && botAnim.i >= botRun.placements.length;
+  if(botDone && humanIsDone()){        // stuck, with the bot already home
+    el('rptext').textContent = 'Nothing else fits. Undo to keep trying, or compare now.';
+    el('raceprompt').classList.add('show');
+  }
+}
+
+/* ---------- bot playback ---------- */
+function stepBot(dt){
+  if(!botAnim||!botAnim.running||!botBin||!botRun) return;
+  botAnim.t += dt/botAnim.pace;
+  while(botAnim.t>=1 && botAnim.i<botRun.placements.length){
+    const [b,x,y,z,l,w,h] = botRun.placements[botAnim.i];
+    botBin.add(b,x,y,z,l,w,h);
+    botAnim.i++; botAnim.t -= 1;
+  }
+  if(botAnim.i>=botRun.placements.length){
+    botAnim.running = false;
+    if(!botDoneAt) botDoneAt = performance.now();
+    if(mode==='watch'){
+      finishRound();
+      if(watchLoop) setTimeout(()=>{ if(mode==='watch'&&watchLoop){ el('result').classList.remove('show'); newRound(); } }, 2600);
+    } else if(botRun.solved){
+      // it packed every piece, so it reached 100% first -- the race is over
+      concludeRace();
+    } else if(!humanIsDone()){
+      el('rptext').textContent = 'Bot finished at '+(botBin.fill*100).toFixed(1)+
+        '% in '+secs(botDoneAt-raceStart)+'. Pack it all to win, or stop and compare.';
+      el('raceprompt').classList.add('show');
+      el('overlay').textContent = 'your turn — place every piece to win outright, or beat '
+        +(botBin.fill*100).toFixed(1)+'%';
+    } else maybeFinish();
+  }
+  syncHud();
+}
+
+/* ---------- pointer ---------- */
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+// Raycaster keeps its own layer mask, defaulting to layer 0 only. Every box is
+// on layer 1 or 2 for the split screen, so without this nothing is ever hit.
+ray.layers.enableAll();
+
+function aim(bin, aspect){
+  camera.aspect = aspect; camera.updateProjectionMatrix();
+  camera.position.set(bin.centre.x + Math.sin(yaw)*Math.cos(pitch)*dist,
+                      bin.centre.y + Math.sin(pitch)*dist,
+                      bin.centre.z + Math.cos(yaw)*Math.cos(pitch)*dist);
+  camera.lookAt(bin.centre);
+}
+function setupRay(ev){
+  if(!humanBin) return false;
+  const r = cv.getBoundingClientRect();
+  const halfW = split() ? r.width/2 : r.width;
+  const lx = ev.clientX - r.left;
+  if(split() && lx > halfW) return false;
+  aim(humanBin, halfW/Math.max(r.height,1));
+  ndc.x = (lx/halfW)*2-1;
+  ndc.y = -((ev.clientY-r.top)/r.height)*2+1;
+  ray.setFromCamera(ndc,camera);
+  return true;
+}
+function hitStaging(){
+  const hits = ray.intersectObjects(humanBin.stage.map(s=>s.mesh), false);
+  return hits.length ? hits[0].object.userData.pieceIndex : -1;
+}
+function cellUnderPointer(){
+  const [l,w] = dims(puzzle.pieces[sel],selRot);
+  const hit = new THREE.Vector3();
+  if(!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0), humanBin.cy), hit)) return null;
+  const x = Math.round(hit.x + humanBin.cx - l/2);
+  const y = Math.round(hit.z + humanBin.cz - w/2);
+  return {x:Math.max(0,Math.min(humanBin.C[0]-l,x)), y:Math.max(0,Math.min(humanBin.C[1]-w,y))};
+}
+function onHover(ev){
+  if(!humanBin || sel<0 || ended){ clearGhost(); return; }
+  if(!setupRay(ev)){ clearGhost(); return; }
+  const cell = cellUnderPointer(); if(!cell){ clearGhost(); return; }
+  const [l,w,h] = dims(puzzle.pieces[sel],selRot);
+  const ok = humanBin.legal(cell.x,cell.y,l,w,h);
+  const z = humanBin.landing(cell.x,cell.y,l,w);
+  clearGhost();
+  const geo = new THREE.BoxGeometry(l,h,w);
+  ghost = new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:ok?GHOST_OK:GHOST_NO,transparent:true,opacity:.22}));
+  ghost.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:ok?GHOST_OK:GHOST_NO})));
+  ghost.position.copy(humanBin.worldPos(cell.x,cell.y,z,l,w,h));
+  ghost.userData={cell,ok}; scene.add(ghost);
+  ghost.traverse(o=>o.layers.set(LAYER_YOU));
+}
+function onClick(ev){
+  if(!humanBin || !puzzle || ended) return;
+  if(!setupRay(ev)) return;
+  const picked = hitStaging();
+  if(picked >= 0){ sel = picked; selRot = humanBin.rot[picked]; refreshPickHighlight(); onHover(ev); return; }
+  if(sel < 0){ toast('pick a box from the ground first'); return; }
+  if(!ghost) return;
+  const {cell,ok} = ghost.userData||{};
+  if(!ok){ toast("it won't fit there"); return; }
+  const [l,w,h] = dims(puzzle.pieces[sel],selRot);
+  humanBin.add(sel, cell.x, cell.y, humanBin.landing(cell.x,cell.y,l,w), l, w, h);
+  sel=-1; clearGhost(); refreshPickHighlight(); syncHud(); maybeFinish();
+}
+function refreshPickHighlight(){
+  if(!humanBin) return;
+  for(const s of humanBin.stage) s.mesh.material = boxMat(s.index===sel);
+}
+
+/* ---------- hud ---------- */
+function syncHud(){
+  const total = puzzle ? puzzle.pieces.length : 0;
+  const a = mode==='watch' ? botBin : humanBin;
+  el('pctA').textContent = a ? (a.fill*100).toFixed(1)+'%' : '0%';
+  el('subA').textContent = a ? a.placed.length+' / '+total+' boxes' : '—';
+  el('trackA').style.width = a ? (a.fill*100)+'%' : '0%';
+  if(mode==='compete' && botBin){
+    el('pctB').textContent = (botBin.fill*100).toFixed(1)+'%';
+    el('subB').textContent = botRun ? botBin.placed.length+' / '+total+' boxes' : 'thinking…';
+    el('trackB').style.width = (botBin.fill*100)+'%';
+  }
+}
+
+/* ---------- loop ---------- */
+const easeIn=t=>t*t, easeOut=t=>1-Math.pow(1-t,3);
+function animateDrops(bin,dt){
+  if(!bin) return;
+  for(const r of bin.placed){
+    if(r.anim<=0) continue;
+    r.anim = Math.max(0, r.anim - dt*2.6);
+    const f = 1-r.anim;
+    if(f<0.72){ const t=easeIn(f/0.72); r.mesh.position.set(r.target.x, r.target.y + r.drop*(1-t), r.target.z); r.mesh.scale.set(1,1,1); }
+    else { const t=easeOut((f-0.72)/0.28); r.mesh.position.copy(r.target);
+           const sq=1-0.12*Math.sin(t*Math.PI); r.mesh.scale.set(1+(1-sq)*.5, sq, 1+(1-sq)*.5); }
+    if(r.anim<=0){ r.mesh.position.copy(r.target); r.mesh.scale.set(1,1,1); }
+  }
+}
+function animateStaging(bin,dt){
+  if(!bin) return;
+  for(const m of bin.stageMeshes){
+    if(!m.userData.pop) continue;
+    m.userData.pop = Math.max(0, m.userData.pop - dt*7);
+    const s = 0.86 + 0.14*easeOut(1-m.userData.pop);
+    m.scale.set(s,s,s);
+    if(m.userData.pop<=0) m.scale.set(1,1,1);
+  }
+}
+let last=performance.now();
+function frame(now){
+  const dt=Math.min((now-last)/1000,.05); last=now;
+  stepBot(dt); animateDrops(botBin,dt); animateDrops(humanBin,dt); animateStaging(humanBin,dt);
+  if(!dragging && mode==='watch') yaw += dt*0.04;
+  const w=stage.clientWidth, h=stage.clientHeight;
+  if(split()){
+    renderer.setScissorTest(true);
+    renderer.setViewport(0,0,w/2,h); renderer.setScissor(0,0,w/2,h);
+    camera.layers.set(LAYER_YOU); aim(humanBin,(w/2)/Math.max(h,1)); renderer.render(scene,camera);
+    renderer.setViewport(w/2,0,w/2,h); renderer.setScissor(w/2,0,w/2,h);
+    camera.layers.set(LAYER_BOT); aim(botBin,(w/2)/Math.max(h,1)); renderer.render(scene,camera);
+    renderer.setScissorTest(false);
+  } else {
+    const bin = humanBin||botBin;
+    renderer.setViewport(0,0,w,h);
+    if(bin){ camera.layers.set(bin.layer); aim(bin,w/Math.max(h,1)); renderer.render(scene,camera); }
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------- settings ---------- */
+function applyLevel(name){
+  level = name;
+  [...el('levels').children].forEach(b=>b.setAttribute('aria-pressed', b.dataset.level===name ? 'true':'false'));
+  if(name==='custom'){ el('levelnote').textContent = 'your own dimensions'; return; }
+  const L = LEVELS[name], r=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
+  el('gx').value=r(...L.side); el('gy').value=r(...L.side); el('gz').value=r(...L.side);
+  el('np').value=r(...L.pieces);
+  el('levelnote').textContent = L.side[0]===L.side[1] ? L.side[0]+' per side · '+L.pieces.join('-')+' pieces'
+                                                      : L.side.join('-')+' per side · '+L.pieces.join('-')+' pieces';
+}
+el('gear').onclick = ()=>{
+  const open = el('settings').classList.toggle('open');
+  el('gear').setAttribute('aria-expanded', open?'true':'false');
+};
+document.addEventListener('click', e=>{
+  if(!el('settings').contains(e.target) && e.target !== el('gear')) el('settings').classList.remove('open');
+});
+el('levels').addEventListener('click', e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  applyLevel(b.dataset.level);
+  if(b.dataset.level!=='custom'){ watchLoop=(mode==='watch'); newRound(); }
+});
+[...document.querySelectorAll('.dims input')].forEach(i=>i.addEventListener('input',()=>applyLevel('custom')));
+
+/* ---------- wiring ---------- */
+el('modes').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  [...el('modes').children].forEach(c=>c.setAttribute('aria-pressed','false'));
+  b.setAttribute('aria-pressed','true');
+  mode=b.dataset.mode; watchLoop=(mode==='watch'); newRound();
+});
+el('newpuz').onclick = ()=>{ watchLoop=(mode==='watch'); newRound(); };
+el('rand').onclick = ()=>{
+  const r=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
+  el('gx').value=r(8,12); el('gy').value=r(8,12); el('gz').value=r(8,12); el('np').value=r(4,18);
+  applyLevel('custom'); watchLoop=(mode==='watch'); newRound();
+};
+el('startbtn').onclick = ()=>{
+  el('startwrap').style.display='none';
+  el('done').hidden = false;
+  raceStart = performance.now();
+  if(botAnim) botAnim.running = true;
+  el('overlay').textContent = 'the bot is going easy on you — one box every 2.8s. Place every piece to win.';
+};
+function concludeRace(){
+  if(ended || !humanBin) return;
+  humanDoneAt = humanDoneAt || performance.now();
+  // the bot's packing is already decided; skip whatever animation is left so
+  // the comparison uses its real result rather than however far it had got
+  if(botAnim && botRun && botAnim.i < botRun.placements.length){
+    while(botAnim.i < botRun.placements.length){
+      const [b,x,y,z,l,w,h] = botRun.placements[botAnim.i];
+      botBin.add(b,x,y,z,l,w,h).anim = 0;
+      botAnim.i++;
+    }
+    botAnim.running = false;
+  }
+  if(!botDoneAt) botDoneAt = performance.now();
+  el('raceprompt').classList.remove('show');
+  syncHud(); finishRound();
+}
+el('done').onclick = concludeRace;
+el('comparenow').onclick = concludeRace;
+el('undo').onclick = ()=>{
+  if(!humanBin) return;
+  // undo has to work after a "no room left" ending too, or the round is a
+  // dead end when the whole point is that you can back out of a bad choice
+  if(ended && mode==='play'){ resumePlay(); return; }
+  if(ended || !humanBin.removeLast()) return;
+  sel=-1; clearGhost(); refreshPickHighlight(); syncHud();
+};
+el('hint').onclick = ()=>{
+  if(!puzzle||!humanBin) return;
+  while(humanBin.placed.length) humanBin.removeLast();
+  puzzle.solution.slice().sort((a,b)=>a[3]-b[3]).forEach(([b,x,y,z,l,w,h])=>humanBin.add(b,x,y,z,l,w,h));
+  sel=-1; clearGhost(); syncHud(); ended=true;
+  el('settings').classList.remove('open');
+  toast('the perfect answer — every puzzle has one', 3200);
+};
+addEventListener('keydown',e=>{
+  if((e.key==='r'||e.key==='R') && sel>=0 && humanBin && !ended){
+    const list = uniqueRots(puzzle.pieces[sel]);
+    const i = Math.max(0, list.indexOf(selRot));
+    selRot = list[(i+1) % list.length];
+    humanBin.setRot(sel, selRot);      // the waiting box actually turns
+    refreshPickHighlight();
+    e.preventDefault();
+  }
+  if(e.key==='u'||e.key==='U') el('undo').click();
+});
+
+applyLevel('medium');
+resize(); requestAnimationFrame(frame); newRound();
+</script>
+</body>
+</html>
