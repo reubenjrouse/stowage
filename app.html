@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Packing Puzzle</title>
+<title>stowage</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -112,7 +112,7 @@
 <body>
 
 <header>
-  <h1>Packing Puzzle</h1>
+  <h1>Stowage</h1>
   <div class="modes" id="modes" role="group" aria-label="Mode">
     <button data-mode="watch" aria-pressed="true">Watch bot</button>
     <button data-mode="play" aria-pressed="false">Play</button>
@@ -191,7 +191,7 @@ addEventListener('error', ev => {
 });
 
 const ROTS = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
-const KRAFT = 0x9c6b40, PICKED = 0xc86a2b, GHOST_OK = 0x2e7d6b, GHOST_NO = 0xb03a2e;
+const KRAFT = 0x9c6b40, EDGE = 0x74502c, GHOST_OK = 0x2e7d6b, GHOST_NO = 0xb03a2e;
 const LAYER_YOU = 1, LAYER_BOT = 2;
 const LEVELS = {
   // grounded in the measured solve rates: few pieces are genuinely solvable
@@ -206,9 +206,18 @@ function boxMat(picked){
   if(!BOX_MAT){
     // The outline sits exactly on the surface; without a depth offset the two
     // z-fight and shimmer as the camera drifts. That was the "flicker".
-    const mk = c => { const m = new THREE.MeshLambertMaterial({color:c});
-      m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1; return m; };
-    BOX_MAT = mk(KRAFT); PICK_MAT = mk(PICKED);
+    // Standard rather than Lambert: it shades the faces with a gradient
+    // instead of one flat tone each, which is most of what makes a box read
+    // as solid rather than as a flat shape.
+    const mk = () => {
+      const m = new THREE.MeshStandardMaterial({color:KRAFT, roughness:0.92, metalness:0.0});
+      m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1;
+      return m;
+    };
+    BOX_MAT = mk();
+    // a picked-up box goes see-through rather than changing colour, so it
+    // still looks like the same piece of cardboard
+    PICK_MAT = mk(); PICK_MAT.transparent = true; PICK_MAT.opacity = 0.45;
   }
   return picked ? PICK_MAT : BOX_MAT;
 }
@@ -217,7 +226,7 @@ function boxMesh(l,w,h,picked){
   const mesh = new THREE.Mesh(geo, boxMat(picked));
   mesh.castShadow = true; mesh.receiveShadow = false;
   mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),
-    new THREE.LineBasicMaterial({color:0x4a2f16})));
+    new THREE.LineBasicMaterial({color:EDGE, transparent:true, opacity:0.55})));
   return mesh;
 }
 function dims(p,rot){ const r=ROTS[rot]; return [p[r[0]],p[r[1]],p[r[2]]]; }
@@ -346,7 +355,7 @@ class Bin{
     const old = mesh.children[0];
     if(old){ old.geometry.dispose(); mesh.remove(old); }
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry),
-      new THREE.LineBasicMaterial({color:0x4a2f16}));
+      new THREE.LineBasicMaterial({color:EDGE, transparent:true, opacity:0.55}));
     edges.layers.set(this.layer); mesh.add(edges);
     mesh.userData.pop = 1;
     this.layoutStaging();
