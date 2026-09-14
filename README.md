@@ -2,12 +2,9 @@
 
 A reinforcement learning agent that packs 3D boxes into a container, and a browser game where you can watch it, play the same puzzle yourself, or race it.
 
-**Live demo:** _(paste Cloud Run URL here)_ · [watch a clip](assets/demo.mp4)
+**Live demo:** _(https://stowage-627911504151.us-central1.run.app/)_ · 
 
-<!-- To play the clip inline on GitHub: open this file in GitHub's web editor
-     and drag assets/demo.mp4 into it. GitHub uploads the file and inserts a
-     https://github.com/user-attachments/assets/... URL, which renders as a
-     player. A relative path to an .mp4 does not. Paste that URL below. -->
+https://github.com/user-attachments/assets/b17624d1-848e-440f-879e-0f4a470bb3b6
 
 Every puzzle is made by cutting a container into pieces, so a **perfect 100% packing always exists**.
 
