@@ -90,6 +90,13 @@
     padding:26px 30px; min-width:264px; text-align:center; animation:pop .34s cubic-bezier(.2,.9,.3,1.2);}
   @keyframes pop{from{opacity:0; transform:scale(.9) translateY(8px);} to{opacity:1; transform:none;}}
   #rtitle{font-family:Archivo,sans-serif; font-weight:700; font-size:26px; letter-spacing:-.025em; margin:0 0 6px;}
+  /* a perfect pack is the rare one, so it is the only result that gets any
+     of this: the eyebrow, the bigger word, the ring, the confetti */
+  #rkicker{display:none; font-size:10px; font-weight:600; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--active); margin-bottom:9px;}
+  #card.stowed #rkicker{display:block;}
+  #card.stowed{box-shadow:0 0 0 2px var(--active), var(--lift);}
+  #card.stowed #rtitle{font-size:44px; letter-spacing:.04em; text-transform:uppercase; color:var(--cocoa);}
   #rsub{font-size:12.5px; color:var(--muted); margin-bottom:16px;}
   .scores{display:flex; gap:22px; justify-content:center; margin-bottom:18px;}
   .score .n{font-family:Archivo,sans-serif; font-weight:700; font-size:27px; font-variant-numeric:tabular-nums; letter-spacing:-.02em;}
@@ -170,6 +177,7 @@
   <div id="raceprompt"><span id="rptext">—</span><button id="comparenow">Stop &amp; compare</button></div>
   <div id="startwrap"><button id="startbtn">Start the race</button></div>
   <div id="result"><div id="card">
+    <div id="rkicker">every piece placed</div>
     <h2 id="rtitle">—</h2>
     <div id="rsub">—</div>
     <div class="scores" id="rscores"></div>
@@ -191,7 +199,7 @@ addEventListener('error', ev => {
 });
 
 const ROTS = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
-const KRAFT = 0x9c6b40, EDGE = 0x74502c, GHOST_OK = 0x2e7d6b, GHOST_NO = 0xb03a2e;
+const KRAFT = 0x7d5028, EDGE = 0x5a3a1c, GHOST_OK = 0x2e7d6b, GHOST_NO = 0xb03a2e;
 const LAYER_YOU = 1, LAYER_BOT = 2;
 const LEVELS = {
   // grounded in the measured solve rates: few pieces are genuinely solvable
@@ -209,15 +217,16 @@ function boxMat(picked){
     // Standard rather than Lambert: it shades the faces with a gradient
     // instead of one flat tone each, which is most of what makes a box read
     // as solid rather than as a flat shape.
-    const mk = () => {
-      const m = new THREE.MeshStandardMaterial({color:KRAFT, roughness:0.92, metalness:0.0});
+    const mk = seeThrough => {
+      const m = new THREE.MeshStandardMaterial({color:KRAFT, roughness:0.95, metalness:0.0});
+      if(seeThrough){ m.transparent = true; m.opacity = 0.45; }
       m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1;
       return m;
     };
-    BOX_MAT = mk();
+    BOX_MAT = mk(false);
     // a picked-up box goes see-through rather than changing colour, so it
     // still looks like the same piece of cardboard
-    PICK_MAT = mk(); PICK_MAT.transparent = true; PICK_MAT.opacity = 0.45;
+    PICK_MAT = mk(true);
   }
   return picked ? PICK_MAT : BOX_MAT;
 }
@@ -428,7 +437,7 @@ function clearGhost(){
 function clearScene(){
   if(humanBin){humanBin.dispose(); humanBin=null;}
   if(botBin){botBin.dispose(); botBin=null;}
-  clearGhost(); botAnim=null;
+  clearGhost(); endGlimmer(); botAnim=null;
 }
 
 /* ---------- a round ---------- */
@@ -504,7 +513,39 @@ function confetti(){
      .onfinish = ()=>d.remove();
   }
 }
-function showResult(title, sub, scores, party, buttons){
+// A light travelling across the finished pack. The boxes are normally very
+// matte, so roughness drops for the duration -- otherwise the light just
+// brightens them instead of glinting off them.
+let sweep = null;
+function glimmer(bin){
+  if(!bin || !BOX_MAT) return;
+  if(sweep) endGlimmer();
+  const light = new THREE.PointLight(0xffe9c4, 0, Math.max(...bin.C) * 1.5);
+  light.layers.enableAll();
+  scene.add(light);
+  BOX_MAT.roughness = 0.3;
+  sweep = {light, bin, t:0};
+}
+function endGlimmer(){
+  if(!sweep) return;
+  scene.remove(sweep.light);
+  BOX_MAT.roughness = 0.95;
+  sweep = null;
+}
+function stepGlimmer(dt){
+  if(!sweep) return;
+  sweep.t += dt / 1.5;                        // slow enough to actually watch
+  const b = sweep.bin, p = Math.min(1, sweep.t);
+  sweep.light.position.set(
+    -b.cx - 4 + p * (b.C[0] + 8),
+     b.cy * 0.9,
+    -b.cz - 4 + p * (b.C[1] + 8));
+  sweep.light.intensity = 6.0 * Math.sin(p * Math.PI);   // fades in and out
+  if(sweep.t >= 1) endGlimmer();
+}
+
+function showResult(title, sub, scores, stowed, buttons){
+  el('card').classList.toggle('stowed', !!stowed);
   el('rtitle').textContent = title;
   el('rsub').textContent = sub;
   el('rscores').innerHTML = scores.map(s=>
@@ -516,8 +557,16 @@ function showResult(title, sub, scores, party, buttons){
     el2.textContent = b.label; el2.onclick = b.act;
     box.appendChild(el2);
   }
-  el('result').classList.add('show');
-  if(party) confetti();
+  // a perfect pack gets a moment to be admired before the verdict lands
+  if(stowed){
+    glimmer(mode === 'watch' ? botBin : humanBin);
+    setTimeout(() => {
+      el('result').classList.add('show');
+      confetti();
+    }, 1700);
+  } else {
+    el('result').classList.add('show');
+  }
 }
 const secs = ms => (ms/1000).toFixed(1)+'s';
 function resumePlay(){            // step back into a round instead of ending it
@@ -534,8 +583,8 @@ function finishRound(){
 
   if(mode==='play'){
     const perfect = humanBin.fill > 0.9999;
-    showResult(perfect ? 'Perfect fit' : 'No room left',
-      perfect ? 'every piece placed — nothing wasted'
+    showResult(perfect ? 'Stowed' : 'No room left',
+      perfect ? 'the whole container, nothing wasted'
               : 'nothing else fits — step back and try a different arrangement',
       [{key:'You', value:pct(humanBin), colour:'var(--cocoa)'}], perfect,
       perfect ? [nextBtn, againBtn]
@@ -543,8 +592,8 @@ function finishRound(){
 
   } else if(mode==='watch'){
     const perfect = botRun && botRun.solved;
-    showResult(perfect ? 'The bot solved it' : 'Bot finished',
-      perfect ? 'a flawless pack' : (puzzle.pieces.length-botRun.placements.length)+' pieces left over',
+    showResult(perfect ? 'Stowed' : 'Bot finished',
+      perfect ? 'the bot got every piece in' : (puzzle.pieces.length-botRun.placements.length)+' pieces left over',
       [{key:'Bot', value:pct(botBin), colour:'var(--active)'}], perfect, [nextBtn]);
 
   } else {
@@ -557,8 +606,8 @@ function finishRound(){
     if(youPerfect && botPerfect){
       win = humanDoneAt < botDoneAt;
       why = 'both packed it perfectly — ' + (win ? 'you got there first' : 'the bot got there first');
-    } else if(youPerfect){ win = true;  why = 'you found a perfect pack — the bot never did'; }
-    else if(botPerfect){   win = false; why = 'the bot found a perfect pack first'; }
+    } else if(youPerfect){ win = true;  why = 'you stowed it — the bot never did'; }
+    else if(botPerfect){   win = false; why = 'the bot stowed it first'; }
     else if(Math.abs(you-bot) > 1e-9){
       win = you > bot;
       why = win ? 'neither of you packed it perfectly, but yours is tighter'
@@ -567,10 +616,10 @@ function finishRound(){
 
     const yourTime = humanDoneAt ? secs(humanDoneAt-raceStart) : '—';
     const botTime  = botDoneAt ? secs(botDoneAt-raceStart) : '—';
-    showResult(win ? 'You win' : 'The bot wins', why,
+    showResult(youPerfect ? 'Stowed' : (win ? 'You win' : 'The bot wins'), why,
       [{key:'You '+yourTime, value:pct(humanBin), colour:'var(--cocoa)'},
        {key:'Bot '+botTime,  value:pct(botBin),  colour:'var(--active)'}],
-      win, [nextBtn, againBtn]);
+      youPerfect, [nextBtn, againBtn]);
   }
 }
 function humanIsDone(){
@@ -606,7 +655,7 @@ function stepBot(dt){
     if(!botDoneAt) botDoneAt = performance.now();
     if(mode==='watch'){
       finishRound();
-      if(watchLoop) setTimeout(()=>{ if(mode==='watch'&&watchLoop){ el('result').classList.remove('show'); newRound(); } }, 2600);
+      if(watchLoop) setTimeout(()=>{ if(mode==='watch'&&watchLoop){ el('result').classList.remove('show'); newRound(); } }, 5600);
     } else if(botRun.solved){
       // it packed every piece, so it reached 100% first -- the race is over
       concludeRace();
@@ -733,6 +782,7 @@ let last=performance.now();
 function frame(now){
   const dt=Math.min((now-last)/1000,.05); last=now;
   stepBot(dt); animateDrops(botBin,dt); animateDrops(humanBin,dt); animateStaging(humanBin,dt);
+  stepGlimmer(dt);
   if(!dragging && mode==='watch') yaw += dt*0.04;
   const w=stage.clientWidth, h=stage.clientHeight;
   if(split()){

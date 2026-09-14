@@ -82,6 +82,27 @@ THE THREE BUGS THAT COST THIS PROJECT DAYS -- DO NOT REPEAT
    exactly as PQNet builds its matrix M. 71k params instead of 2.4M, and
    it learns. THIS WAS THE ACTUAL BLOCKER.
 
+ABLATIONS SETTLE WHICH BUG ACTUALLY MATTERED (ablations.png, 400k each)
+Four arms, one change each, plotted from tb_logs by plot_ablations.py:
+  full model      fill 0.74, entropy 6.4 -> 4.2
+  flat head       fill 0.49 FLAT, entropy barely moves (6.4 -> 6.2)
+  volume reward   fill 0.77, entropy tracks the full model
+  no rotation     fill 0.735, but the best exact-solve rate (4.3% vs 0.2%)
+
+READ THIS AGAINST BUG 2 AND BUG 3 BELOW. The flat head is confirmed as the
+real blocker -- it never forms an opinion at all. But the position-blind
+"volume" reward trains FINE here, which contradicts the bug-2 story. The two
+faults were present at the same time during debugging and were confounded:
+with a flat head nothing learns whatever the reward is, and once the
+dot-product head is in, the delayed signal (a bad placement means fewer boxes
+fit later) is enough on its own at this budget. The compaction reward is
+still the better-shaped one and is what the shipped model trained on, but it
+is not what unblocked the project. Do not repeat the original claim.
+
+Rotation is a genuine trade, not a free win: dropping it shrinks the action
+space so small puzzles get solved outright far more often, at a small cost in
+average fill.
+
 SMALLER LESSONS
 - ent_coef must scale DOWN as the action space grows. At 0.01 with ~9,800
   legal actions the entropy bonus was ~15% of episode return -- the agent
@@ -124,64 +145,80 @@ PROBLEM FORMULATION (decided and implemented — don't relitigate)
 WHAT'S IN THE REPO
 =====================================================================
 
-THE RL CORE
-environment.py   The game. Container, pieces, rules, reward, Gymnasium API
-                 (reset/step). Also action_masks() (which moves are legal),
-                 the reverse-construction puzzle generator, and self-tests
-                 under `python environment.py`.
-policy.py        The policy network. Box embeddings (attention) x position
-                 embeddings (CNN over the heightmap), scored by dot product.
-                 This is what made the agent able to learn at all.
-train.py         Training: MaskablePPO, checkpointing, --resume, and a paired
+LAYOUT
+backend/   all the Python. Flat imports work because running any of these
+           puts backend/ on sys.path; paths.py anchors everything else to the
+           repo root via __file__, so the cwd does not matter.
+frontend/  app.html and viewer.html
+model/     packing_policy.zip, the shipped policy
+
+backend/environment.py   The game. Container, pieces, rules, reward, Gymnasium
+                 API (reset/step), action_masks() (which moves are legal), the
+                 reverse-construction puzzle generator, and self-tests under
+                 `python backend/environment.py`.
+backend/policy.py        The policy network. Box embeddings (attention) x
+                 position embeddings (CNN over the heightmap), scored by dot
+                 product. This is what made the agent able to learn at all.
+backend/train.py         MaskablePPO, checkpointing, --resume, and a paired
                  agent-vs-greedy evaluation at the end.
-baseline.py      The greedy first-fit heuristic the agent has to beat.
-solver.py        Inference. rollout(), best-of-N, and beam_search(); run it
-                 directly for a quick demo. Beam for small puzzles, sampling
-                 for large -- see the numbers in its docstring.
-model_loader.py  Finds the trained policy. ALWAYS matches on observation
-                 space, never on "highest step number": training runs share
-                 checkpoints/ and their filenames collide by step count, so a
-                 bigger number can be an older run with a different network.
+backend/baseline.py      The greedy first-fit heuristic the agent has to beat.
+backend/solver.py        Inference: rollout(), best-of-N, beam_search().
+backend/model_loader.py  Finds the trained policy. ALWAYS matches on
+                 observation space, never on "highest step number": runs share
+                 checkpoints/ and their filenames collide by step count.
+backend/paths.py         ROOT/FRONTEND/MODEL_DIR/CHECKPOINTS/TB_LOGS.
+backend/app.py           FastAPI. /api/puzzle builds a puzzle (instant, no
+                 model); /api/solve runs the policy.
+                 `python backend/app.py` -> http://127.0.0.1:8000
+backend/check_js.py      Rough syntax check for frontend/app.html's inline JS.
+                 Cannot catch runtime errors -- only a browser can.
+backend/export_run.py    Writes frontend/packing_runs.json for viewer.html.
+backend/plot_ablations.py  Draws ablations.png from tb_logs.
 
-THE APP
-app.py           FastAPI backend. /api/puzzle builds a puzzle to the player's
-                 chosen size (instant, no model); /api/solve runs the policy.
-                 `python app.py`, then open http://127.0.0.1:8000
-app.html         The whole front end: three.js scene, Watch / Play / Compete,
-                 3D staging area, split-screen compete, settings, results.
-check_js.py      Rough syntax check for app.html's inline JS (balanced
-                 delimiters, functions defined, element ids exist). It cannot
-                 catch runtime errors -- only a browser can.
+frontend/app.html        The whole game: three.js scene, Watch / Play /
+                 Compete, 3D staging area, split screen, settings, results.
+frontend/viewer.html     Standalone replay page, no server needed.
 
-STANDALONE DEMO (no server needed)
-export_run.py    Runs the bot on a few puzzles and writes packing_runs.json.
-viewer.html      Replays those runs as a self-contained page; this is what
-                 gets published as a shareable artifact.
-packing_runs.json  The exported runs viewer.html embeds.
+DEPLOYMENT (live on Google Cloud Run)
+Dockerfile       Installs the CPU torch wheel (500MB, not the 2.5GB CUDA one)
+                 and pins the thread pools to 1 -- torch otherwise sizes them
+                 to the HOST core count and the arenas alone blew past the
+                 1GiB container limit. CMD is `python backend/app.py`.
+.dockerignore    Keeps venv/ and checkpoints/ out of the image; model/ is NOT
+                 excluded.
+requirements.txt        runtime only (what the image installs)
+requirements-train.txt  the above plus tensorboard/tqdm/rich
+run_graph.ps1    Runs the ablation arms. Equal budgets so they share an LR
+                 schedule.
+assets/          ablations.png (the figure the README embeds) and demo.mp4
+                 (7.6MB clip). Committed but .dockerignored -- no business in
+                 a runtime image. NOTE: GitHub will not play a relative-path
+                 .mp4 inline; drag the file into the web editor to get a
+                 user-attachments URL that does.
 
-DATA AND WEIGHTS
-model/packing_policy.zip  The shipped trained policy (3.4M steps). Committed,
-                 so a fresh clone runs the app with no training.
-checkpoints/     Training checkpoint stream, ~900MB. GITIGNORED.
+checkpoints/     Training checkpoint stream, ~1.8GB. GITIGNORED.
 tb_logs/         TensorBoard output. GITIGNORED.
-reference_code_papers.txt  Source papers.
+(the papers themselves are cited in README.md, not vendored)
 
 =====================================================================
 KEY REFERENCE PAPERS / SOURCES (in priority order)
 =====================================================================
-1. "Deep Reinforcement Learning for Scalable Offline Three-Dimensional
-   Packing" (2026) — single network simultaneously selects object +
-   placement, attention encoders, closest match to what we want.
+1. Yin, He, Chen. "Deep Reinforcement Learning for Scalable Offline
+   Three-Dimensional Packing." AAAI 2026. github.com/Ashenone511/BBMP-DCS
+   Single network selects object + placement; the dot-product scoring and
+   the r_t = g_{t-1} - g_t reward both come from here. Closest match.
 2. Attend2Pack (arXiv 2107.04333) — attention-based, decomposes action
    space but single shared reward.
-3. GOPT (github.com/Xiong5Heng/GOPT, IEEE RA-L 2024) — single
-   actor-critic (shared "Packing Transformer" backbone), real public
-   CODE, real robot validation. Their EMS (Empty Maximal Space)
+3. Xiong et al. "GOPT: Generalizable Online 3D Bin Packing via
+   Transformer-Based Deep RL." IEEE RA-L 9(11), 2024.
+   github.com/Xiong5Heng/GOPT -- single masked actor-critic on PPO, real
+   public code, real robot validation. Their EMS (Empty Maximal Space)
    approach is the next lever if the action space needs shrinking.
 4. Jiang et al. 2021 (AAMAS) — single encoder-decoder agent outputs
    sequence, orientation, position from ONE network. NOT hierarchical.
-5. Wang & Dong (arXiv 2403.12420) — clean height-map placement math
-   (Section II-C); this is the placement model currently implemented.
+5. Wang, Lin, Kong, Dong. "Bin Packing Optimization via Deep
+   Reinforcement Learning." IEEE RA-L 10(3), 2025 (arXiv 2403.12420).
+   Clean height-map placement math; this is the model implemented here.
 
 =====================================================================
 REJECTED APPROACHES (don't suggest these again)

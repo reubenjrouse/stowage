@@ -19,3 +19,5 @@ checkpoints/
 # lets a fresh clone run the app with no training
 *.zip
 !model/packing_policy.zip
+
+CLAUDE.md

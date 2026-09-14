@@ -28,7 +28,11 @@ def rollout(model, env, seed: int, deterministic: bool):
     obs, _ = env.reset(seed=seed)
     placements, done = [], False
     while not done:
-        action, _ = model.predict(obs, action_masks=env.action_masks(), deterministic=deterministic)
+        mask = env.action_masks()
+        if not mask.any():
+            break          # nothing legal left; asking the policy now would
+                           # hand it an all-masked distribution and crash
+        action, _ = model.predict(obs, action_masks=mask, deterministic=deterministic)
         box, rot, x, y = env.decode_action(int(action))
         l, w, h = env.oriented_dims(box, rot)
         z = env._landing_height(x, y, l, w)  # record where it lands, before it does

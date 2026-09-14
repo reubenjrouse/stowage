@@ -302,7 +302,17 @@ class BinPackingEnv(gym.Env):
             pieces = [pieces[int(i)] for i in order]
             self.n_active = len(pieces)
             self.boxes = np.zeros((self.max_boxes, 3), dtype=np.float32)
-            self.boxes[: self.n_active] = np.array([p[3:] for p in pieces], dtype=np.float32)
+            # Turn each piece a random way before handing it over. Without this
+            # the stored dims ARE the solution dims, so rotation 0 is always the
+            # right answer -- the agent never has to learn to rotate and a player
+            # never has to press R. self.solution keeps the true orientation, so
+            # the hint still shows a real perfect pack.
+            dims = []
+            for piece in pieces:
+                perm = ROTATIONS[int(self.np_random.integers(len(ROTATIONS)))]
+                d = piece[3:]
+                dims.append([d[perm[0]], d[perm[1]], d[perm[2]]])
+            self.boxes[: self.n_active] = np.array(dims, dtype=np.float32)
             self.solution = [(i,) + tuple(p) for i, p in enumerate(pieces)]
         else:
             self.boxes = self._sample_boxes()

@@ -13,6 +13,7 @@ from sb3_contrib import MaskablePPO
 
 from environment import BinPackingEnv
 from model_loader import load_policy
+from paths import FRONTEND
 from solver import beam_search, rollout
 
 
@@ -70,7 +71,7 @@ def main():
         print(f"  {label:6s} seed {seed:2d}  {env.cur_gx}x{env.cur_gy}x{env.cur_h}  "
               f"{env.n_active} pieces -> {fill:.1%} ({len(placements)} placed)")
 
-    with open("packing_runs.json", "w") as fh:
+    with open(FRONTEND / "packing_runs.json", "w") as fh:
         json.dump(dict(model_steps=step, runs=out), fh)
     print(f"\nwrote packing_runs.json ({sum(len(r['placements']) for r in out)} placements)")
 

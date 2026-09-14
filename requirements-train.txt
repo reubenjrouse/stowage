@@ -1,0 +1,4 @@
+# Everything the app needs, plus the training-only extras.
+tensorboard
+tqdm
+rich

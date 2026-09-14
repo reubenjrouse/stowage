@@ -21,6 +21,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from baseline import evaluate_baseline
 from environment import BinPackingEnv
+from paths import CHECKPOINTS, TB_LOGS
 from policy import PackingPolicy
 
 
@@ -137,11 +138,16 @@ def main(
     grid_range: tuple,
     boxes_range: tuple,
     lr: float,
+    reward_mode: str,
+    policy: str,
+    split_variety: float,
+    run_name: str,
 ):
     device = check_device()
     env_kwargs = dict(grid_size=grid_size, max_height=grid_size, max_boxes=max_boxes,
                       n_rotations=n_rotations, randomize=randomize, box_source=box_source,
-                      grid_range=grid_range, height_range=grid_range, boxes_range=boxes_range)
+                      grid_range=grid_range, height_range=grid_range, boxes_range=boxes_range,
+                      reward_mode=reward_mode, split_variety=split_variety)
 
     # Roughly 95% of the time per step goes on the environment, not the
     # network, and that part cannot use the GPU. Running the environments in
@@ -153,8 +159,18 @@ def main(
         print(f"Resuming from {resume}")
         model = MaskablePPO.load(resume, env=vec_env, device=device, tensorboard_log=log_dir)
     else:
+        # "factored" is policy.py: box embeddings x position embeddings, scored
+        # by dot product. "flat" is the ablation arm -- SB3's stock MLP ending
+        # in one Linear(64 -> n_actions) layer, which has to learn every action
+        # score as an independent number with nothing shared between them.
+        if policy == "flat":
+            policy_cls, policy_kwargs = "MultiInputPolicy", {}
+        else:
+            policy_cls = PackingPolicy
+            policy_kwargs = dict(n_rotations=n_rotations, embed_dim=embed_dim)
+
         model = MaskablePPO(
-            PackingPolicy,  # dot-product policy: box embeddings x position embeddings
+            policy_cls,
             vec_env,
             verbose=1,
             device=device,
@@ -163,12 +179,14 @@ def main(
         ent_coef=ent_coef,
             n_epochs=n_epochs,
             target_kl=target_kl,  # early-stop an update once it leaves the trust region
-            policy_kwargs=dict(n_rotations=n_rotations, embed_dim=embed_dim),
+            policy_kwargs=policy_kwargs,
         )
 
     n_actions = max_boxes * n_rotations * grid_size * grid_size
     print(f"\n{max_boxes} boxes, {n_rotations} orientations, {grid_size}x{grid_size} grid "
           f"-> {n_actions:,} actions (masked to the legal ones each step)")
+    print(f"run '{run_name}': policy={policy}, reward={reward_mode}, "
+          f"rotations={n_rotations}, split_variety={split_variety}")
     print(f"Training for {total_timesteps:,} timesteps...")
     print(f"Watch progress live with: tensorboard --logdir {log_dir}\n")
 
@@ -178,8 +196,8 @@ def main(
         FillFractionCallback(grid_cap=grid_size),
         CheckpointCallback(
             save_freq=max(1, checkpoint_freq // n_envs),
-            save_path="checkpoints",
-            name_prefix="ppo_bin_packing",
+            save_path=str(CHECKPOINTS),
+            name_prefix=run_name,
         ),
     ])
 
@@ -189,11 +207,12 @@ def main(
             callback=callback,
             progress_bar=True,
             reset_num_timesteps=not resume,
+            tb_log_name=run_name,
         )
     finally:
         # runs on Ctrl+C and on crashes too, not only clean completion
-        model.save("ppo_bin_packing_stage2")
-        print("saved -> ppo_bin_packing_stage2.zip")
+        model.save(run_name)
+        print(f"saved -> {run_name}.zip")
 
     # Always score on the FIXED canonical setting so the headline number stays
     # comparable with every earlier run, and additionally on randomised
@@ -222,7 +241,7 @@ if __name__ == "__main__":
     parser.add_argument("--timesteps", type=int, default=1_000_000)
     parser.add_argument("--grid-size", type=int, default=14, help="container cap; also the height cap")
     parser.add_argument("--max-boxes", type=int, default=30)
-    parser.add_argument("--log-dir", type=str, default="./tb_logs")
+    parser.add_argument("--log-dir", type=str, default=str(TB_LOGS))
     parser.add_argument("--n-envs", type=int, default=8, help="parallel environments (subprocesses) for faster data collection")
     # The usual 0.01 assumes a handful of actions. With ~9,800 legal moves the
     # bonus works out at about 15% of what an episode is worth, which pays the
@@ -242,6 +261,19 @@ if __name__ == "__main__":
     # Off by default. At 0.03 it cut every update short and the policy barely
     # moved. clip_range already limits how far an update can go.
     parser.add_argument("--target-kl", type=float, default=None, help="optional extra brake on update size; off by default")
+    # --- ablation knobs: change ONE of these against a reference run ---
+    parser.add_argument("--reward-mode", type=str, default="compact", choices=["compact", "volume"],
+                        help="compact = box volume minus the void it seals underneath; "
+                             "volume = position-blind, every spot for a given box scores the same (ablation)")
+    parser.add_argument("--policy", type=str, default="factored", choices=["factored", "flat"],
+                        help="factored = policy.py's box x position dot-product head; "
+                             "flat = stock MLP into one Linear(64 -> n_actions) layer (ablation)")
+    parser.add_argument("--split-variety", type=float, default=0.0,
+                        help="0 = always split the largest piece; >0 = chance of splitting a random one, "
+                             "which is what the app serves")
+    parser.add_argument("--run-name", type=str, default="ppo_bin_packing",
+                        help="names the tensorboard subfolder, the checkpoint prefix and the final .zip, "
+                             "so concurrent runs cannot overwrite each other")
     args = parser.parse_args()
     main(
         args.timesteps,
@@ -261,4 +293,8 @@ if __name__ == "__main__":
         (args.grid_min, args.grid_size),
         (args.boxes_min, args.max_boxes),
         args.lr,
+        args.reward_mode,
+        args.policy,
+        args.split_variety,
+        args.run_name,
     )

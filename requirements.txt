@@ -1,8 +1,9 @@
+# Runtime only -- this is what the container installs.
 gymnasium>=1.0
 stable-baselines3>=2.3
 sb3-contrib>=2.3
 torch>=2.0
 numpy
-tensorboard
-tqdm
-rich
+fastapi
+uvicorn
+pydantic

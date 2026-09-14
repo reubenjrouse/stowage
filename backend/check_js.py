@@ -9,9 +9,11 @@ catch runtime errors -- only a browser can do that.
 import io
 import re
 
+from paths import FRONTEND
+
 BS = chr(92)  # backslash, written this way to survive shell quoting
 
-src = io.open('app.html', encoding='utf-8').read()
+src = io.open(FRONTEND / 'app.html', encoding='utf-8').read()
 js = src.split('<script>')[-1].split('</script>')[0]
 
 out = []

@@ -18,7 +18,9 @@ import re
 
 from sb3_contrib import MaskablePPO
 
-SHIPPED = os.path.join("model", "packing_policy.zip")
+from paths import CHECKPOINTS, MODEL_DIR
+
+SHIPPED = str(MODEL_DIR / "packing_policy.zip")
 
 
 def load_policy(reference_env, verbose: bool = True):
@@ -33,7 +35,7 @@ def load_policy(reference_env, verbose: bool = True):
             print(f"{SHIPPED} does not match this environment; scanning checkpoints/")
 
     files = sorted(
-        glob.glob(os.path.join("checkpoints", "*.zip")),
+        glob.glob(str(CHECKPOINTS / "*.zip")),
         key=lambda f: int(re.search(r"(\d+)_steps", f).group(1)),
         reverse=True,
     )

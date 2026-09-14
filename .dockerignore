@@ -1,0 +1,19 @@
+# Never ship the venv (795MB) or the checkpoint stream (~890MB). The one
+# model the app needs is model/packing_policy.zip, which is NOT excluded.
+venv/
+checkpoints/
+checkpoints_old_grid10/
+tb_logs/
+
+__pycache__/
+*.pyc
+
+# archived weights -- superseded by model/packing_policy.zip
+ppo_bin_packing_stage2.zip
+resume_point_311k.zip
+stage3_validated_1M_grid10.zip
+
+.git/
+*.log
+*.tmp.json
+assets/

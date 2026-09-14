@@ -2,7 +2,14 @@
 
 A reinforcement learning agent that packs 3D boxes into a container, and a browser game where you can watch it, play the same puzzle yourself, or race it.
 
-Every puzzle is made by cutting a container into pieces, so a **perfect 100% packing always exists**. That gives a real yardstick — not "did it beat a heuristic", but "how close did it get to a known perfect answer".
+**Live demo:** _(paste Cloud Run URL here)_ · [watch a clip](assets/demo.mp4)
+
+<!-- To play the clip inline on GitHub: open this file in GitHub's web editor
+     and drag assets/demo.mp4 into it. GitHub uploads the file and inserts a
+     https://github.com/user-attachments/assets/... URL, which renders as a
+     player. A relative path to an .mp4 does not. Paste that URL below. -->
+
+Every puzzle is made by cutting a container into pieces, so a **perfect 100% packing always exists**.
 
 ## Results
 
@@ -18,21 +25,34 @@ Every puzzle is made by cutting a container into pieces, so a **perfect 100% pac
 
 On a single pass it beats the greedy heuristic by **+2.06 points** (t = 6.9, winning 66% of individual puzzles). The reason shows up in the waste: it traps **2.6%** of the container as dead air, against greedy's 6.7%.
 
+## What actually made it work
+
+![ablations](assets/ablations.png)
+
+Each curve is the same training run with exactly one thing changed, over 400k steps.
+
+**The network architecture was the whole ballgame.** The orange line is a standard MLP ending in one big output layer — it has to learn 25,920 unrelated scores, and "box 3 at (4,5)" tells it nothing about "box 3 at (4,6)". It never gets off the floor, and the middle panel shows why: its policy entropy barely moves, meaning it never forms an opinion about anything. Replacing that head with a dot product between box descriptions and spot descriptions is what made the problem learnable at all.
+
+**The reward shaping mattered less than I thought.** I'd originally blamed a position-blind reward for the agent not learning, but once the architecture is fixed, the green line (plain volume reward) trains about as well at this budget. The two problems were confounded during debugging; the ablation separates them, and the architecture is the one that counts.
+
+**Rotation trades fill for exact solves.** Dropping it shrinks the action space, so the red line solves more puzzles outright while filling slightly less on average.
+
 ## Run it
 
 ```bash
 pip install -r requirements.txt
-python app.py          # then open http://127.0.0.1:8000
+python backend/app.py      # then open http://127.0.0.1:8000
 ```
 
-A trained model ships with the repo, so this works without training anything.
+A trained model ships with the repo, so this works without training anything. There's a `Dockerfile` for deploying it — that's what the live demo runs on.
 
-**Watch** the bot pack puzzle after puzzle · **Play** one yourself (click a box, `R` turns it, click to drop, `U` undoes) · **Compete** for the same pieces on a split screen.
+**Watch** the bot pack puzzle after puzzle · **Play** one yourself (click a box, `R` turns it, click to drop, `U` undoes) · **Compete** for the same pieces on a split screen, first to a perfect pack wins.
 
 To train from scratch — about four hours on a CPU:
 
 ```bash
-python train.py --randomize --box-source perfect --grid-min 8 --grid-size 12 --timesteps 4000000
+pip install -r requirements-train.txt
+python backend/train.py --randomize --box-source perfect --grid-min 8 --grid-size 12 --timesteps 4000000
 ```
 
 ## How it works
@@ -45,14 +65,41 @@ At play time it can take one pass, sample several attempts and keep the best, or
 
 ## Files
 
+```
+backend/     the RL system and the server
+frontend/    the game itself
+model/       the trained policy that ships with the repo
+```
+
+**`backend/`**
+
 | | |
 |---|---|
 | `environment.py` | the game: container, boxes, rules, reward, legal moves |
 | `policy.py` | the network |
-| `train.py` | training |
-| `baseline.py` | the greedy heuristic to beat |
 | `solver.py` | playing a puzzle: single pass, sampling, beam search |
-| `app.py` / `app.html` | game server and front end |
+| `baseline.py` | the greedy heuristic to beat |
+| `model_loader.py` | finds the trained policy |
+| `paths.py` | where everything lives, anchored to the repo root |
+| `app.py` | FastAPI server — builds puzzles, runs the policy |
+| `train.py` | training |
+| `plot_ablations.py` | draws the figure above from the training logs |
+| `check_js.py` | rough syntax check for the front end's inline JS |
+| `export_run.py` | writes the runs `viewer.html` replays |
+
+**`frontend/`**
+
+| | |
+|---|---|
+| `app.html` | the whole game: three.js scene, all three modes |
+| `viewer.html` | standalone replay page, needs no server |
+
+**Root**
+
+| | |
+|---|---|
+| `Dockerfile` | CPU-only image; this is what the live demo runs |
+| `run_graph.ps1` | runs the ablation arms behind the figure |
 
 ## Limitations
 
@@ -60,4 +107,10 @@ At play time it can take one pass, sample several attempts and keep the best, or
 - **Sizes are capped** at 6-12 per side and 30 boxes; the network's input is a fixed size.
 - **It rarely finds the perfect answer** — 97% of 3-4 piece puzzles, ~60% at 5-8, essentially never above 17. Exact 3D packing is NP-hard.
 
-Built following the approach in PQNet and GOPT; sources in `reference_code_papers.txt`. A longer writeup — the dead ends, and what actually fixed them — is separate.
+## References
+
+Three papers shaped the implementation:
+
+- Yin, H., He, H., Chen, F. **Deep Reinforcement Learning for Scalable Offline Three-Dimensional Packing.** AAAI 2026. — where the dot-product scoring comes from: describe each item and each space, then score every pair by how well the two match, and multiply by a feasibility mask. Also the reward shape, `r_t = g_{t-1} − g_t` over wasted space. [code](https://github.com/Ashenone511/BBMP-DCS)
+- Xiong, H., Guo, C., Peng, J., Ding, K., Chen, W., Qiu, X., Bai, L., Xu, J. **GOPT: Generalizable Online 3D Bin Packing via Transformer-Based Deep Reinforcement Learning.** IEEE RA-L 9(11), 2024. — a single masked actor-critic trained with PPO, and the Empty Maximal Space idea for shrinking the action space. [code](https://github.com/Xiong5Heng/GOPT)
+- Wang, B., Lin, Z., Kong, W., Dong, H. **Bin Packing Optimization via Deep Reinforcement Learning.** IEEE RA-L 10(3), 2025. — the height-map placement model used here: a box falls straight down and rests on whatever is beneath it.

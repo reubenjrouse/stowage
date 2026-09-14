@@ -11,25 +11,31 @@ They are separate calls so the app can show you the puzzle while the bot thinks.
 
 from __future__ import annotations
 
+import os
 import random
-import re
 import time
+import traceback
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sb3_contrib import MaskablePPO
+
+import torch
 
 from environment import BinPackingEnv
 from model_loader import load_policy
+from paths import FRONTEND
 from solver import beam_search, rollout
+
+# One vCPU in production, and every request is a single sequential rollout --
+# extra threads buy nothing and cost hundreds of MB of arena.
+torch.set_num_threads(1)
 
 GRID_CAP, BOX_CAP = 12, 30
 MIN_SIDE = 6          # below the trained 8-12 the bot is weak; 6 is the floor we allow
 TRAINED_MIN = 8
 
 app = FastAPI()
-MODEL = None
 
 
 def make_env(gx: int, gy: int, gz: int, n: int) -> BinPackingEnv:
@@ -38,6 +44,13 @@ def make_env(gx: int, gy: int, gz: int, n: int) -> BinPackingEnv:
         randomize=True, box_source="perfect", split_variety=0.7,
         boxes_range=(n, n), fixed_container=(gx, gy, gz),
     )
+
+
+# Loaded at import, not under __main__: a production server starts us with
+# `uvicorn app:app`, which never runs the __main__ block, and MODEL would
+# still be None when the first request arrived.
+MODEL = load_policy(make_env(10, 10, 10, 8))
+app.state.model_steps = MODEL.num_timesteps
 
 
 class Spec(BaseModel):
@@ -65,7 +78,7 @@ def info():
 
 @app.get("/")
 def index():
-    return FileResponse("app.html")
+    return FileResponse(FRONTEND / "app.html")
 
 
 @app.post("/api/puzzle")
@@ -93,6 +106,17 @@ def solve(spec: Spec):
     if spec.seed is None:
         raise HTTPException(400, "solve needs the seed returned by /api/puzzle")
     validate(spec)
+    try:
+        return _solve(spec)
+    except Exception:
+        # print the exact puzzle, so anything that slips through can be
+        # reproduced instead of guessed at
+        print("SOLVE FAILED for", spec.model_dump(), flush=True)
+        traceback.print_exc()
+        raise HTTPException(500, "the bot hit an error on this puzzle")
+
+
+def _solve(spec: Spec):
     env = make_env(spec.gx, spec.gy, spec.gz, spec.n)
     t0 = time.time()
 
@@ -118,6 +142,8 @@ def solve(spec: Spec):
 
 if __name__ == "__main__":
     import uvicorn
-    MODEL = load_policy(make_env(10, 10, 10, 8))
-    app.state.model_steps = MODEL.num_timesteps
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+
+    # A container needs every interface, not loopback, and takes its port from
+    # the environment -- Cloud Run injects PORT and routes to whatever it says.
+    uvicorn.run(app, host=os.environ.get("HOST", "0.0.0.0"),
+                port=int(os.environ.get("PORT", 8000)), log_level="warning")
