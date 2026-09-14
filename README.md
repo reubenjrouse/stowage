@@ -2,7 +2,7 @@
 
 A reinforcement learning agent that packs 3D boxes into a container, and a browser game where you can watch it, play the same puzzle yourself, or race it.
 
-**Live demo:** _(https://stowage-627911504151.us-central1.run.app/)_ · 
+**Live demo:** [stowage](https://stowage-627911504151.us-central1.run.app/)
 
 https://github.com/user-attachments/assets/b17624d1-848e-440f-879e-0f4a470bb3b6
 
@@ -29,8 +29,6 @@ On a single pass it beats the greedy heuristic by **+2.06 points** (t = 6.9, win
 Each curve is the same training run with exactly one thing changed, over 400k steps.
 
 **The network architecture was the whole ballgame.** The orange line is a standard MLP ending in one big output layer — it has to learn 25,920 unrelated scores, and "box 3 at (4,5)" tells it nothing about "box 3 at (4,6)". It never gets off the floor, and the middle panel shows why: its policy entropy barely moves, meaning it never forms an opinion about anything. Replacing that head with a dot product between box descriptions and spot descriptions is what made the problem learnable at all.
-
-**The reward shaping mattered less than I thought.** I'd originally blamed a position-blind reward for the agent not learning, but once the architecture is fixed, the green line (plain volume reward) trains about as well at this budget. The two problems were confounded during debugging; the ablation separates them, and the architecture is the one that counts.
 
 **Rotation trades fill for exact solves.** Dropping it shrinks the action space, so the red line solves more puzzles outright while filling slightly less on average.
 
