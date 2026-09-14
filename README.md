@@ -1,8 +1,15 @@
-# Stowage: a packing puzzle
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/cc6b56b7-b68f-46f3-822a-354a00e52c40">
+    <img src="https://github.com/user-attachments/assets/cc6b56b7-b68f-46f3-822a-354a00e52c40" width="300" alt="Ponytail, the lazy senior dev">
+  </picture>
+</p>
+
+# stowage: a packing puzzle
 
 A reinforcement learning agent that packs 3D boxes into a container, and a browser game where you can watch it, play the same puzzle yourself, or race it.
 
-**Live demo:** [stowage](https://stowage-627911504151.us-central1.run.app/)
+**Live demo:** [stowage.com](https://stowage-627911504151.us-central1.run.app/)
 
 https://github.com/user-attachments/assets/b17624d1-848e-440f-879e-0f4a470bb3b6
 
